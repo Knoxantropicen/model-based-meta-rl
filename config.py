@@ -25,3 +25,6 @@ test_cfg = {
         'render': True,
         }
 
+# TODO: add tasks
+train_tasks = None
+test_task = None
