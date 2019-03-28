@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from torch import nn
+from torch import nn, autograd
 from torch.distributions.normal import Normal
 import gym
 from copy import deepcopy
@@ -8,32 +8,35 @@ from collections import deque
 import os
 
 from net import Net
-from utils import set_seed, get_space_shape, check_task
+from utils import set_seed
 
 
 class MBMRL:
-    def __init__(self, tasks, controller, cfg):
-        set_seed(cfg['seed'])
+    ''' 
+    Model-Based Meta-Reinforcement Learning
+    Original Paper: Nagabandi et al., 2019, Learning to Adapt in Dynamic, Real-World Environments through Meta-Reinforcement Learning
+    '''
+    def __init__(self, tasks, model, controller, seed, iteration_num, task_sample_num, task_sample_frequency,
+            rollout_len, M, K, beta, eta, dataset_size, phi_initial):
+        set_seed(seed)
 
         self.tasks = np.array(tasks)
         self.controller = controller
+        self.dataset = deque(maxlen=dataset_size)
 
-        self.iteration_num = cfg['iteration_num']
-        self.task_sample_num = cfg['task_sample_num']
-        self.task_sample_frequency = cfg['task_sample_frequency']
-        self.plan_horizon = cfg['plan_horizon']
-        self.M = cfg['M']
-        self.K = cfg['K']
-        self.beta = cfg['beta']
-        self.eta = cfg['eta']
-
-        self.dataset = deque(maxlen=cfg['dataset_size'])
-        ob_shape, ac_shape = check_task(self.tasks)
-        self.theta = Net(input_shape=ob_shape + ac_shape, output_shape=ob_shape,
-                hid_shape=cfg['hid_shape'], hid_num=cfg['hid_num'], activation=cfg['activation'])
+        self.theta = model
         self.phi = []
         for param in self.theta.parameters():
-            self.phi.append(torch.full_like(param, cfg['phi_initial']))
+            self.phi.append(torch.full_like(param, phi_initial))
+
+        self.iteration_num = iteration_num
+        self.task_sample_num = task_sample_num
+        self.task_sample_frequency = task_sample_frequency
+        self.rollout_len = rollout_len
+        self.M = M
+        self.K = K
+        self.beta = beta
+        self.eta = eta
 
     def load_param(self):
         # TODO: support
@@ -79,7 +82,7 @@ class MBMRL:
     def meta_update(self, new_losses, new_thetas, d_thetas, d2_thetas):
         d_theta_sum = 0
         d_phi_sum = 0
-        for new_loss, new_theta, d_theta, d2_theta in zip(losses, new_thetas, d_thetas, d2_thetas):
+        for new_loss, new_theta, d_theta, d2_theta in zip(new_losses, new_thetas, d_thetas, d2_thetas):
             d_new_theta = self.compute_d_theta(new_theta, new_loss)
             for i, d2 in enumerate(d2_theta):
                 d2 *= self.phi[i]
@@ -100,7 +103,7 @@ class MBMRL:
             past_traj = rollout[-self.M:]
             new_theta, _ = self.adaptation_update(past_traj, self.theta)
             action = self.controller.plan(new_theta, state)
-            next_state, rew, done, _ = task.step(action)
+            next_state, reward, done, _ = task.step(action)
             rollout.append([torch.tensor(state), torch.tensor(action), torch.tensor(next_state)])
             t += 1
             if done:
@@ -156,7 +159,7 @@ class MBMRL:
             past_traj = rollout[-self.M:]
             new_theta, _ = self.adaptation_update(past_traj, theta)
             action = self.controller.plan(new_theta, state)
-            next_state, rew, done, _ = task.step(action)
+            next_state, reward, done, _ = task.step(action)
             theta = new_theta
             if render:
                 # TODO: check render() arguments
