@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 
+from utils import get_space_shape
+
 
 class Controller:
     '''
@@ -36,16 +38,18 @@ class MPPI(Controller):
             self.U = self.task.action_space.sample()
 
     def _sample_noise(self):
-        return np.random.normal(loc=self.noise_mu, scale=self.noise_sigma, size=(self.K, self.T))
+        action_dim = get_space_shape(self.task.action_space)
+        return np.random.normal(loc=self.noise_mu, scale=self.noise_sigma, 
+            size=(self.K, self.T, action_dim))
 
     def _compute_costs(self, dynamics, state_init, noise):
         costs = [0] * self.K
         for k in range(self.K):
             state = torch.tensor(state_init)
             for t in range(self.T):
-                action = torch.tensor(self.U[t] + noise[k, t])
+                action = torch.tensor(self.U[t] + noise[k, t, :])
                 state = dynamics(torch.cat((state, action), 0))
-                costs[k] += self.task.get_cost(state) + self.lamda * np.sum(self.U[t]) / self.noise_sigma * noise[k, t]
+                costs[k] += self.task.get_cost(state) + self.lamda * np.dot(self.U[t], noise[k, t, :]) / self.noise_sigma
         return costs
 
     def _compute_importance_weights(self, costs):
@@ -58,6 +62,6 @@ class MPPI(Controller):
         noise = self._sample_noise()
         costs = self._compute_costs(dynamics, state, noise)
         weights = self._compute_importance_weights(costs)
-        action = self.U[0] + np.sum(weights * noise[:, 0])
+        action = self.U[0] + np.sum(weights * noise[:, 0, :])
         return action
 
