@@ -1,3 +1,9 @@
+import os.path as osp
+
+
+ROOT_DIR = osp.dirname(osp.abspath(__file__))
+LOCAL_LOG_DIR = osp.join(ROOT_DIR, 'data')
+
 # TODO: add tasks
 train_tasks = None
 test_task = None

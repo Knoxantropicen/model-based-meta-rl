@@ -6,6 +6,8 @@ import gym
 from copy import deepcopy
 from collections import deque
 import os
+import os.path as osp
+import gtimer as gt
 
 from net import Net
 from utils import set_seed
@@ -16,9 +18,10 @@ class MBMRL:
     Model-Based Meta-Reinforcement Learning
     Original Paper: Nagabandi et al., 2019, 'Learning to Adapt in Dynamic, Real-World Environments through Meta-Reinforcement Learning'
     '''
-    def __init__(self, tasks, model, controller, seed, iteration_num, task_sample_num, task_sample_frequency,
+    def __init__(self, tasks, model, controller, logger, seed, iteration_num, task_sample_num, task_sample_frequency,
             rollout_len, M, K, beta, eta, dataset_size, phi_initial):
         set_seed(seed)
+        self.logger = logger
 
         self.tasks = np.array(tasks)
         self.controller = controller
@@ -38,13 +41,40 @@ class MBMRL:
         self.beta = beta
         self.eta = eta
 
-    def load_param(self):
-        # TODO: support
-        pass
+        self.theta_loss = None
 
-    def save_param(self):
-        # TODO: support
-        pass
+        self._epoch_start_time = None
+        self._n_task_steps_total = 0
+        self._n_model_steps_total = 0
+        self._n_rollouts_total = 0
+
+    def _get_params(self, iter):
+        return {
+            'iteration': iter,
+            'theta': self.theta.state_dict(),
+            'phi': self.phi,
+            'loss': self.theta_loss,
+            'n_task_steps': self._n_task_steps_total,
+            'n_model_steps': self._n_model_steps_total,
+            'n_rollouts': self._n_rollouts_total,
+            }
+    
+    def _set_params(self, params):
+        self.theta.load_state_dict(params['theta'])
+        self.phi = params['phi']
+        self.theta_loss = params['loss']
+        self._n_task_steps_total = params['n_task_steps']
+        self._n_model_steps_total = params['n_model_steps']
+        self._n_rollouts_total = params['n_rollouts']
+        return params['iter']
+        
+    def _get_extra_data(self):
+        return {
+            'dataset': self.dataset,
+            }
+    
+    def _set_extra_data(self, extra_data):
+        self.dataset = extra_data['dataset']
 
     def _compute_theta_loss(self, theta, traj):
         # traj: [[s1, a1, s2], [s2, a2, s3], ...]
@@ -55,6 +85,7 @@ class MBMRL:
             dyn_output = theta(dyn_input)
             dyn_normal = Normal(dyn_output)
             loss -= dyn_normal.log_prob(next_state)
+            self._n_model_steps_total += 1
         return loss
 
     def _compute_d_theta(self, theta, loss):
@@ -106,6 +137,7 @@ class MBMRL:
             next_state, _, done, _ = task.step(action)
             rollout.append([torch.tensor(state), torch.tensor(action), torch.tensor(next_state)])
             t += 1
+            self._n_task_steps_total += 1
             if done:
                 if t < self.rollout_len:
                     rollout = []
@@ -126,15 +158,63 @@ class MBMRL:
         task = np.random.choice(self.tasks)
         return task
 
-    def train(self):
-        for i in range(self.iteration_num):
+    def _start_iteration(self, iter):
+        self.logger.push_prefix('Iteration #%d | ' % iter)
+
+    def _end_iteration(self):
+        self._record_stats()
+        self.logger.pop_prefix()
+
+    def _record_stats(self):
+        times_itrs = gt.get_times().stamps.itrs
+        sample_time = times_itrs['sample'][-1]
+        adaptation_time = times_itrs['adaptation'][-1]
+        meta_time = times_itrs['meta'][-1]
+        iter_time = sample_time + adaptation_time + meta_time
+        total_time = gt.get_times().total
+
+        self.logger.record_tabular('Model Loss', self.theta_loss)
+        self.logger.record_tabular('Dataset Size', len(self.dataset))
+        self.logger.record_tabular('Total Model Steps', self._n_model_steps_total)
+        self.logger.record_tabular('Total Task Steps', self._n_task_steps_total)
+        self.logger.record_tabular('Total Rollouts', self._n_rollouts_total)
+        self.logger.record_tabular('Sample Time (s)', sample_time)
+        self.logger.record_tabular('Adaptation Time (s)', adaptation_time)
+        self.logger.record_tabular('Meta Time (s)', meta_time)
+        self.logger.record_tabular('Iteration Time (s)', iter_time)
+        self.logger.record_tabular('Total Time (s)', total_time)
+        
+        self.logger.dump_tabular(with_prefix=False, with_timestamp=False)
+
+    def train(self, resume=False, load_iter=None):
+        gt.reset()
+        gt.set_def_unique(False)
+        start_iter = 0
+
+        if resume:
+            params = self.logger.load_params(load_iter)
+            start_iter = self._set_params(params)
+            self.theta.train()
+
+            extra_data = self.logger.load_extra_data()
+            self._set_extra_data(extra_data)
+
+        for i in gt.timed_for(range(start_iter, self.iteration_num), save_itrs=True):
+            self._start_iteration(i)
+
+            gt.stamp('sample')
             if i % self.task_sample_frequency == 0:
+                self.logger.log('Data Collection')
                 task = self._sample_task()
                 # collect trajectories on sampled tasks and aggregate to dataset
                 # TODO: check if only collect one rollout on one task
                 rollout = self._collect_traj(task)
+                self._n_rollouts_total += 1
                 self.dataset.append(rollout)
                 np.random.shuffle(self.dataset)
+
+            gt.stamp('adaptation')
+            self.logger.log('Adaptation Update')
             new_losses, new_thetas, d_thetas, d2_thetas = [], [], [], []
             for j in range(self.task_sample_num):
                 # sample M+K steps from dataset
@@ -147,8 +227,16 @@ class MBMRL:
                 new_thetas.append(new_theta)
                 d_thetas.append(d_theta)
                 d2_thetas.append(d2_theta)
+            self.theta_loss = torch.mean(new_losses)
+
             # do meta update on theta and phi
+            gt.stamp('meta')
+            self.logger.log('Meta Update')
             self._meta_update(new_losses, new_thetas, d_thetas, d2_thetas)
+
+            self._end_iteration()
+            self.logger.save_params(i, self._get_params(i))
+            self.logger.save_extra_data(self._get_extra_data())
 
     def test(self, task, iteration_num, render):
         rollout = []
