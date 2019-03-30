@@ -42,13 +42,13 @@ class MPPI(Controller):
         return np.random.normal(loc=self.noise_mu, scale=self.noise_sigma, 
             size=(self.K, self.T, action_dim))
 
-    def _compute_costs(self, dynamics, state_init, noise):
+    def _compute_costs(self, dynamics, state_init, noise, new_dynamics_params=None):
         costs = [0] * self.K
         for k in range(self.K):
             state = torch.tensor(state_init)
             for t in range(self.T):
                 action = torch.tensor(self.U[t] + noise[k, t, :])
-                state = dynamics(torch.cat((state, action), 0))
+                state = dynamics(torch.cat((state, action), 0), new_dynamics_params)
                 costs[k] += self.task.get_cost(state) + self.lamda * np.dot(self.U[t], noise[k, t, :]) / self.noise_sigma
         return costs
 
@@ -58,9 +58,9 @@ class MPPI(Controller):
         weights /= np.sum(weights)
         return weights
 
-    def plan(self, dynamics, state):
+    def plan(self, dynamics, state, new_dynamics_params=None):
         noise = self._sample_noise()
-        costs = self._compute_costs(dynamics, state, noise)
+        costs = self._compute_costs(dynamics, state, noise, new_dynamics_params)
         weights = self._compute_importance_weights(costs)
         action = self.U[0] + np.sum(weights * noise[:, 0, :])
         return action

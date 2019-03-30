@@ -14,8 +14,10 @@ train_cfg = {
         'iteration_num': 1e3,
         'task_sample_num': 10,
         'task_sample_frequency': 5,
+        # adaption
+        'adaption_update_num': 5,
         # learning rate
-        'phi_initial': 1e-2,
+        'phi': 1e-2,
         'beta': 1e-3,
         'eta': 1e-3,
         # sample

@@ -4,7 +4,7 @@ from torch import nn, autograd
 from torch.distributions.normal import Normal
 import gym
 from copy import deepcopy
-from collections import deque
+from collections import deque, OrderedDict
 import os
 import os.path as osp
 import gtimer as gt
@@ -19,7 +19,7 @@ class MBMRL:
     Original Paper: Nagabandi et al., 2019, 'Learning to Adapt in Dynamic, Real-World Environments through Meta-Reinforcement Learning'
     '''
     def __init__(self, tasks, model, controller, logger, seed, iteration_num, task_sample_num, task_sample_frequency,
-            rollout_len, M, K, beta, eta, dataset_size, phi_initial):
+            rollout_len, adaption_update_num, M, K, beta, eta, phi, dataset_size):
         set_seed(seed)
         self.logger = logger
 
@@ -27,22 +27,22 @@ class MBMRL:
         self.controller = controller
         self.dataset = deque(maxlen=dataset_size)
 
-        self.theta = model
-        self.phi = []
-        for param in self.theta.parameters():
-            self.phi.append(torch.full_like(param, phi_initial))
-
         self.iteration_num = iteration_num
         self.task_sample_num = task_sample_num
         self.task_sample_frequency = task_sample_frequency
         self.rollout_len = rollout_len
+        self.adaption_update_num = adaption_update_num
         self.M = M
         self.K = K
         self.beta = beta
         self.eta = eta
 
-        self.theta_loss = None
+        self.theta = model
+        self.meta_optimizer = torch.optim.Adam(self.theta.parameters(), lr=self.beta)
+        self.phi = torch.tensor(phi, requires_grad=True)
+        self.lr_optimizer = torch.optim.Adam([self.phi], lr=self.eta)
 
+        self.theta_loss = None
         self._epoch_start_time = None
         self._n_task_steps_total = 0
         self._n_model_steps_total = 0
@@ -76,54 +76,49 @@ class MBMRL:
     def _set_extra_data(self, extra_data):
         self.dataset = extra_data['dataset']
 
-    def _compute_theta_loss(self, theta, traj):
+    def _compute_theta_loss(self, traj, new_theta=None):
         # traj: [[s1, a1, s2], [s2, a2, s3], ...]
         loss = 0
         for i in len(traj):
             state, action, next_state = traj[i]
             dyn_input = torch.cat((state, action), 0)
-            dyn_output = theta(dyn_input)
+            dyn_output = self.theta(dyn_input, new_params=new_theta)
             dyn_normal = Normal(dyn_output)
             loss -= dyn_normal.log_prob(next_state)
             self._n_model_steps_total += 1
         return loss
 
-    def _compute_d_theta(self, theta, loss):
-        return autograd.grad(loss, theta.parameters())
+    def _adaptation_update(self, traj):
+        loss = self._compute_theta_loss(traj)
+        d_theta = autograd.grad(loss, self.theta.parameters())
 
-    def _compute_d2_theta(self, theta, loss):
-        d_theta = autograd.grad(loss, theta.parameters(), create_graph=True)
-        d2_theta = autograd.grad(d_theta, theta.parameters())
-        return d2_theta, d_theta
+        new_theta_dict = {key: val.clone() for key, val in self.theta.state_dict().items()}
+        new_theta_params = OrderedDict()
+        for (key, val), d in zip(self.theta.named_parameters(), d_theta):
+            new_theta_params[key] = val - self.phi * d
+            new_theta_dict[key] = new_theta_params[key]
 
-    def _adaptation_update(self, theta, traj, get_d2=False):
-        loss = self._compute_theta_loss(traj, theta)
-        if get_d2:
-            d2_theta, d_theta = self._compute_d2_theta(theta, loss)
-        else:
-            d_theta = self._compute_d_theta(theta, loss)
-        new_theta = deepcopy(theta)
-        for i, (param, d_t) in enumerate(zip(new_theta.parameters(), d_theta)):
-            param.data -= self.phi[i] * d_t / len(traj)
-        if get_d2:
-            return new_theta, d_theta, d2_theta
-        else:
-            return new_theta, d_theta
+        def zero_grad(params):
+            for p in params:
+                if p.grad is not None:
+                    p.grad.zero_()
+        
+        for _ in range(self.adaption_update_num):
+            new_loss = self._compute_theta_loss(traj, new_theta_dict)
+            zero_grad(new_theta_params.values())
+            d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
+            for (key, val), d in zip(self.theta.named_parameters(), d_theta):
+                new_theta_params[key] = val - self.phi * d
+                new_theta_dict[key] = new_theta_params[key]
 
-    def _meta_update(self, new_losses, new_thetas, d_thetas, d2_thetas):
-        d_theta_sum = 0
-        d_phi_sum = 0
-        for new_loss, new_theta, d_theta, d2_theta in zip(new_losses, new_thetas, d_thetas, d2_thetas):
-            d_new_theta = self._compute_d_theta(new_theta, new_loss)
-            for i, d2 in enumerate(d2_theta):
-                d2 *= self.phi[i]
-            d_theta_sum += d_new_theta * (1 - d2_theta)
-            d_phi_sum += d_new_theta * (-d_theta)
-        d_theta_sum = d_theta_sum * self.beta / self.task_sample_num
-        d_phi_sum = d_phi_sum * self.eta / self.task_sample_num
-        for i, (param, d_t, d_p) in enumerate(zip(self.theta.parammeters(), d_theta_sum, d_phi_sum)):
-            param.data -= d_t
-            self.phi[i] -= d_p
+        return new_theta_dict
+
+    def _meta_update(self, meta_loss):
+        self.meta_optimizer.zero_grad()
+        self.lr_optimizer.zero_grad()
+        meta_loss.backward(retain_graph=True)
+        self.meta_optimizer.step()
+        self.lr_optimizer.step()
 
     def _collect_traj(self, task):
         rollout = []
@@ -132,8 +127,8 @@ class MBMRL:
         t = 0
         while t < self.rollout_len:
             past_traj = rollout[-self.M:]
-            new_theta, _ = self._adaptation_update(past_traj, self.theta)
-            action = self.controller.plan(new_theta, state)
+            new_theta_dict = self._adaptation_update(past_traj)
+            action = self.controller.plan(self.theta, new_theta_dict, state)
             next_state, _, done, _ = task.step(action)
             rollout.append([torch.tensor(state), torch.tensor(action), torch.tensor(next_state)])
             t += 1
@@ -215,24 +210,21 @@ class MBMRL:
 
             gt.stamp('adaptation')
             self.logger.log('Adaptation Update')
-            new_losses, new_thetas, d_thetas, d2_thetas = [], [], [], []
+            new_losses = []
             for j in range(self.task_sample_num):
                 # sample M+K steps from dataset
                 traj = self._sample_traj()
                 # do adaptation update, get new theta and gradients
-                new_theta, d_theta, d2_theta = self._adaptation_update(traj[:self.M], self.theta, get_d2=True)
+                new_theta_dict = self._adaptation_update(traj[:self.M])
                 # compute loss using new theta
-                new_loss = self._compute_theta_loss(new_theta, traj[self.M:])
+                new_loss = self._compute_theta_loss(traj[self.M:], new_theta_dict)
                 new_losses.append(new_loss)
-                new_thetas.append(new_theta)
-                d_thetas.append(d_theta)
-                d2_thetas.append(d2_theta)
             self.theta_loss = torch.mean(new_losses)
 
             # do meta update on theta and phi
             gt.stamp('meta')
             self.logger.log('Meta Update')
-            self._meta_update(new_losses, new_thetas, d_thetas, d2_thetas)
+            self._meta_update(self.theta_loss)
 
             self._end_iteration()
             self.logger.save_params(i, self._get_params(i))
@@ -242,13 +234,12 @@ class MBMRL:
         rollout = []
         state = task.reset()
         self.controller.set_task(task)
-        theta = deepcopy(self.theta)
         for i in range(iteration_num):
             past_traj = rollout[-self.M:]
-            new_theta, _ = self._adaptation_update(past_traj, theta)
-            action = self.controller.plan(new_theta, state)
+            new_theta_dict = self._adaptation_update(past_traj)
+            action = self.controller.plan(self.theta, state, new_theta_dict)
             next_state, _, done, _ = task.step(action)
-            theta = new_theta
+            self.theta.load_state_dict(new_theta_dict)
             if render:
                 # TODO: check render() arguments
                 task.render()
