@@ -82,8 +82,8 @@ class MBMRL:
         for i in len(traj):
             state, action, next_state = traj[i]
             dyn_input = torch.cat((state, action), 0)
-            dyn_output = self.theta(dyn_input, new_params=new_theta)
-            dyn_normal = Normal(dyn_output)
+            delta_state = self.theta(dyn_input, new_params=new_theta)
+            dyn_normal = Normal(state + delta_state)
             loss -= dyn_normal.log_prob(next_state)
             self._n_model_steps_total += 1
         return loss
