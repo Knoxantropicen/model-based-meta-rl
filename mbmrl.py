@@ -25,13 +25,13 @@ class MBMRL:
 
         self.tasks = np.array(tasks)
         self.controller = controller
-        self.dataset = deque(maxlen=dataset_size)
+        self.dataset = deque(maxlen=int(dataset_size))
 
-        self.iteration_num = iteration_num
-        self.task_sample_num = task_sample_num
-        self.task_sample_frequency = task_sample_frequency
-        self.rollout_len = rollout_len
-        self.adaption_update_num = adaption_update_num
+        self.iteration_num = int(iteration_num)
+        self.task_sample_num = int(task_sample_num)
+        self.task_sample_frequency = int(task_sample_frequency)
+        self.rollout_len = int(rollout_len)
+        self.adaption_update_num = int(adaption_update_num)
         self.M = M
         self.K = K
         self.beta = beta
@@ -78,9 +78,10 @@ class MBMRL:
 
     def _compute_theta_loss(self, traj, new_theta=None):
         # traj: [[s1, a1, s2], [s2, a2, s3], ...]
-        loss = 0
-        for i in len(traj):
-            state, action, next_state = traj[i]
+        assert traj
+        loss = torch.tensor([0.0], requires_grad=True)
+        for transition in traj:
+            state, action, next_state = transition
             dyn_input = torch.cat((state, action), 0)
             delta_state = self.theta(dyn_input, new_params=new_theta)
             dyn_normal = Normal(state + delta_state)
@@ -89,6 +90,9 @@ class MBMRL:
         return loss
 
     def _adaptation_update(self, traj):
+        if traj == []:
+            return None
+
         loss = self._compute_theta_loss(traj)
         d_theta = autograd.grad(loss, self.theta.parameters())
 
@@ -128,9 +132,13 @@ class MBMRL:
         while t < self.rollout_len:
             past_traj = rollout[-self.M:]
             new_theta_dict = self._adaptation_update(past_traj)
-            action = self.controller.plan(self.theta, new_theta_dict, state)
+            action = self.controller.plan(self.theta, state, new_theta_dict)
             next_state, _, done, _ = task.step(action)
-            rollout.append([torch.tensor(state), torch.tensor(action), torch.tensor(next_state)])
+            if action.shape == ():
+                action = [action]
+            rollout.append([torch.tensor(state, dtype=torch.float), 
+                torch.tensor(action, dtype=torch.float), 
+                torch.tensor(next_state, dtype=torch.float)])
             t += 1
             self._n_task_steps_total += 1
             if done:

@@ -1,5 +1,7 @@
 from argparse import ArgumentParser
+import gym
 
+import task
 from mbmrl import MBMRL
 from controller import MPPI
 from net import Net
@@ -33,9 +35,11 @@ def main():
     # load configs when resume training
     if args.resume:
         cfgs = load_cfgs(logger.get_log_dir())
+    
+    tasks = [gym.make(t) for t in cfgs['tasks']]
 
     # get shape of task space
-    ob_shape, ac_shape = check_task(cfgs['tasks'])
+    ob_shape, ac_shape = check_task(tasks)
 
     # build dynamics network
     model = Net(input_shape=ob_shape + ac_shape, output_shape=ob_shape, **cfgs['net'])
@@ -44,9 +48,9 @@ def main():
     controller = MPPI(**cfgs['controller'])
 
     # train model-based meta RL
-    algo = MBMRL(train_tasks, model, controller, logger, **cfgs['train'])
+    algo = MBMRL(tasks, model, controller, logger, **cfgs['train'])
     algo.train(resume=args.resume, load_iter=args.iter)
 
 
-if __name__ == '_main__':
+if __name__ == '__main__':
     main()

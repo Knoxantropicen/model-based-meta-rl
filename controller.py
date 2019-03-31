@@ -35,12 +35,13 @@ class MPPI(Controller):
     def set_task(self, task):
         self.task = task
         if self.U is None:
-            self.U = self.task.action_space.sample()
+            self.U = [self.task.action_space.sample()] * self.T
+        self.U = np.float32(self.U)
 
     def _sample_noise(self):
         action_dim = get_space_shape(self.task.action_space)
         return np.random.normal(loc=self.noise_mu, scale=self.noise_sigma, 
-            size=(self.K, self.T, action_dim))
+            size=(self.K, self.T, action_dim)).astype('f')
 
     def _compute_costs(self, dynamics, state_init, noise, new_dynamics_params=None):
         costs = [0] * self.K
@@ -50,7 +51,7 @@ class MPPI(Controller):
                 action = torch.tensor(self.U[t] + noise[k, t, :])
                 delta_state = dynamics(torch.cat((state, action), 0), new_dynamics_params)
                 state += delta_state
-                costs[k] += self.task.get_cost(state) + self.lamda * np.dot(self.U[t], noise[k, t, :]) / self.noise_sigma
+                costs[k] += self.task.env.get_cost(state) + self.lamda * np.dot(self.U[t], noise[k, t, :]) / self.noise_sigma
         return costs
 
     def _compute_importance_weights(self, costs):

@@ -15,7 +15,7 @@ def get_space_shape(space):
     if isinstance(space, gym.spaces.Box):
         return space.shape[0]
     elif isinstance(space, gym.spaces.Discrete):
-        return space.n
+        return 1
     else:
         raise Exception('unsupported type')
 
