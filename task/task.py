@@ -9,13 +9,13 @@ class Task(gym.Env):
     
     def reformat_action(self, action):
         if isinstance(self.action_space, gsp.Box):
-            action = action.astype(self.dtype)
+            action = action.astype(self.action_space.dtype)
         elif isinstance(self.action_space, gsp.Discrete):
-            action = action.round().astype(int)
+            action = np.clip(action.round(), 0, self.action_space.n - 1).astype(int)
         elif isinstance(self.action_space, gsp.MultiBinary):
-            action = np.clip(action.round(), 0, 1).astype(self.dtype)
+            action = np.clip(action.round(), 0, 1).astype(self.action_space.dtype)
         elif isinstance(self.action_space, gsp.MultiDiscrete):
-            action = np.clip(action.round(), 0, self.nvec).astype(self.dtype)
+            action = np.clip(action.round(), 0, self.action_space.nvec - 1).astype(self.action_space.dtype)
         else:
             raise NotImplementedError
         return action
