@@ -2,9 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class Net(nn.Module):
     def __init__(self, input_shape, output_shape, hid_shape, hid_num, activation='tanh'):
         super().__init__()
+        self.input_shape = input_shape
+        self.output_shape = output_shape
+        self.hid_shape = hid_shape
         self.hid_num = hid_num
         if activation == 'tanh':
             self.activation = [nn.Tanh, torch.tanh]
@@ -13,10 +17,10 @@ class Net(nn.Module):
         else:
             raise Exception('unsupported activation type')
 
-        layers = [nn.Linear(input_shape, hid_shape), self.activation[0]()]
+        layers = [nn.Linear(self.input_shape, self.hid_shape), self.activation[0]()]
         for _ in range(self.hid_num):
-            layers.extend([nn.Linear(hid_shape, hid_shape), self.activation[0]()])
-        layers.append(nn.Linear(hid_shape, output_shape))
+            layers.extend([nn.Linear(self.hid_shape, self.hid_shape), self.activation[0]()])
+        layers.append(nn.Linear(self.hid_shape, self.output_shape))
         self.model = nn.Sequential(*layers)
 
     def forward(self, x, new_params=None):

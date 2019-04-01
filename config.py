@@ -11,7 +11,7 @@ train_cfg = {
         # general
         'seed': 0,
         'iteration_num': 1e3,
-        'task_sample_num': 10,
+        'task_sample_num': 100,
         'task_sample_frequency': 5,
         # adaption
         'adaption_update_num': 5,
@@ -25,15 +25,18 @@ train_cfg = {
         'rollout_len': 30, # >= M+K
         # dataset
         'dataset_size': 1e4,
+        # model prediction
+        'pred_std': 0.1,
         }
 
 test_cfg = {
+        'seed': 0,
         'iteration_num': 1e3,
         'render': True,
         }
 
 net_cfg = {
-        'hid_shape': 128,
+        'hid_shape': 32,
         'hid_num': 2,
         'activation': 'tanh',
         }

@@ -9,14 +9,12 @@ from config import train_tasks, train_cfg, controller_cfg, net_cfg
 from utils import check_task, load_cfgs
 from logger import setup_logger
 
-
 cfgs = {
-    'tasks': train_tasks,
-    'train': train_cfg,
-    'controller': controller_cfg,
-    'net': net_cfg,
-}
-
+        'train_tasks': train_tasks,
+        'train': train_cfg,
+        'controller': controller_cfg,
+        'net': net_cfg,
+    }
 
 def main():
     global cfgs
@@ -36,19 +34,19 @@ def main():
     if args.resume:
         cfgs = load_cfgs(logger.get_log_dir())
     
-    tasks = [gym.make(t) for t in cfgs['tasks']]
+    train_tasks = [gym.make(t) for t in cfgs['train_tasks']]
 
     # get shape of task space
-    ob_shape, ac_shape = check_task(tasks)
+    ob_shape, ac_shape = check_task(train_tasks)
 
     # build dynamics network
-    model = Net(input_shape=ob_shape + ac_shape, output_shape=ob_shape * 2, **cfgs['net'])
+    model = Net(input_shape=ob_shape + ac_shape, output_shape=ob_shape, **cfgs['net'])
 
     # build controller for adaptation
     controller = MPPI(**cfgs['controller'])
 
     # train model-based meta RL
-    algo = MBMRL(tasks, model, controller, logger, **cfgs['train'])
+    algo = MBMRL(train_tasks, model, controller, logger, **cfgs['train'])
     algo.train(resume=args.resume, load_iter=args.iter)
 
 

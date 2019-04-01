@@ -209,7 +209,7 @@ def create_log_dir(first_time, exp_prefix, seed=0):
     mkdir(log_dir)
     return log_dir
 
-def setup_logger(first_time=True, exp_prefix="default", exp_id=0, seed=0,
+def setup_logger(first_time=True, exp_prefix="default", seed=0,
         cfgs=None, text_log_file='debug.log', tabular_log_file='progress.csv', 
         snapshot_mode='last', snapshot_gap=1):
     '''

@@ -19,7 +19,7 @@ class MBMRL:
     Original Paper: Nagabandi et al., 2019, 'Learning to Adapt in Dynamic, Real-World Environments through Meta-Reinforcement Learning'
     '''
     def __init__(self, tasks, model, controller, logger, seed, iteration_num, task_sample_num, task_sample_frequency,
-            rollout_len, adaption_update_num, M, K, beta, eta, phi, dataset_size):
+            rollout_len, adaption_update_num, M, K, beta, eta, phi, dataset_size, pred_std):
         set_seed(seed)
         self.logger = logger
 
@@ -36,6 +36,7 @@ class MBMRL:
         self.K = K
         self.beta = beta
         self.eta = eta
+        self.pred_std = pred_std
 
         self.theta = model
         self.meta_optimizer = torch.optim.Adam(self.theta.parameters(), lr=self.beta)
@@ -47,6 +48,8 @@ class MBMRL:
         self._n_task_steps_total = 0
         self._n_model_steps_total = 0
         self._n_rollouts_total = 0
+        self._time_total = 0
+        self._time_total_prev = 0
 
     def _get_params(self, iter):
         return {
@@ -54,19 +57,13 @@ class MBMRL:
             'theta': self.theta.state_dict(),
             'phi': self.phi,
             'loss': self.theta_loss,
-            'n_task_steps': self._n_task_steps_total,
-            'n_model_steps': self._n_model_steps_total,
-            'n_rollouts': self._n_rollouts_total,
             }
     
     def _set_params(self, params):
         self.theta.load_state_dict(params['theta'])
         self.phi = params['phi']
         self.theta_loss = params['loss']
-        self._n_task_steps_total = params['n_task_steps']
-        self._n_model_steps_total = params['n_model_steps']
-        self._n_rollouts_total = params['n_rollouts']
-        return params['iter']
+        return params['iteration']
         
     def _get_extra_data(self):
         return {
@@ -76,33 +73,45 @@ class MBMRL:
     def _set_extra_data(self, extra_data):
         self.dataset = extra_data['dataset']
 
-    def _compute_theta_loss(self, traj, new_theta=None):
+    def _get_stats(self):
+        return {
+            'n_task_steps': self._n_task_steps_total,
+            'n_model_steps': self._n_model_steps_total,
+            'n_rollouts': self._n_rollouts_total,
+            'time': self._time_total,
+            }
+
+    def _set_stats(self, stats):
+        self._n_task_steps_total = stats['n_task_steps']
+        self._n_model_steps_total = stats['n_model_steps']
+        self._n_rollouts_total = stats['n_rollouts']
+        self._time_total_prev = stats['time']
+
+    def _compute_theta_loss(self, theta, traj, new_theta=None):
         # traj: [[s1, a1, s2], [s2, a2, s3], ...]
         assert traj
         losses = []
         for transition in traj:
             state, action, next_state = transition
             dyn_input = torch.cat((state, action), 0)
-            delta_state = self.theta(dyn_input, new_params=new_theta)
+            delta_state = theta(dyn_input, new_params=new_theta)
             # TODO: check if implementation of probability is correct
-            delta_mean, delta_std = delta_state.split(len(delta_state) // 2)
-            delta_std = torch.abs(delta_std)
-            dyn_normal = Normal(state + delta_mean, delta_std)
-            losses.append(torch.sum(dyn_normal.log_prob(next_state)))
+            dyn_normal = Normal(state + delta_state, self.pred_std)
+            losses.append(torch.sum(-dyn_normal.log_prob(next_state)))
             self._n_model_steps_total += 1
         loss = torch.mean(torch.stack(losses))
         return loss
 
-    def _adaptation_update(self, traj):
+    def _adaptation_update(self, theta, traj):
         if traj == []:
             return None
 
-        loss = self._compute_theta_loss(traj)
-        d_theta = autograd.grad(loss, self.theta.parameters())
+        loss = self._compute_theta_loss(theta, traj)
+        d_theta = autograd.grad(loss, theta.parameters())
 
-        new_theta_dict = {key: val.clone() for key, val in self.theta.state_dict().items()}
+        new_theta_dict = {key: val.clone() for key, val in theta.state_dict().items()}
         new_theta_params = OrderedDict()
-        for (key, val), d in zip(self.theta.named_parameters(), d_theta):
+        for (key, val), d in zip(theta.named_parameters(), d_theta):
             new_theta_params[key] = val - self.phi * d
             new_theta_dict[key] = new_theta_params[key]
 
@@ -112,10 +121,10 @@ class MBMRL:
                     p.grad.zero_()
         
         for _ in range(self.adaption_update_num):
-            new_loss = self._compute_theta_loss(traj, new_theta_dict)
+            new_loss = self._compute_theta_loss(theta, traj, new_theta_dict)
             zero_grad(new_theta_params.values())
             d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
-            for (key, val), d in zip(self.theta.named_parameters(), d_theta):
+            for (key, val), d in zip(theta.named_parameters(), d_theta):
                 new_theta_params[key] = val - self.phi * d
                 new_theta_dict[key] = new_theta_params[key]
 
@@ -135,7 +144,7 @@ class MBMRL:
         t = 0
         while t < self.rollout_len:
             past_traj = rollout[-self.M:]
-            new_theta_dict = self._adaptation_update(past_traj)
+            new_theta_dict = self._adaptation_update(self.theta, past_traj)
             action = self.controller.plan(self.theta, state, new_theta_dict)
             next_state, _, done, _ = task.step(action)
             if action.shape == ():
@@ -173,7 +182,7 @@ class MBMRL:
         adaptation_time = times_itrs['adaptation'][-1]
         meta_time = times_itrs['meta'][-1]
         iter_time = sample_time + adaptation_time + meta_time
-        total_time = gt.get_times().total
+        self._time_total = gt.get_times().total + self._time_total_prev
 
         self.logger.record_tabular('Model Loss', np.float32(self.theta_loss.data))
         self.logger.record_tabular('Dataset Size', len(self.dataset))
@@ -184,7 +193,7 @@ class MBMRL:
         self.logger.record_tabular('Adaptation Time (s)', adaptation_time)
         self.logger.record_tabular('Meta Time (s)', meta_time)
         self.logger.record_tabular('Iteration Time (s)', iter_time)
-        self.logger.record_tabular('Total Time (s)', total_time)
+        self.logger.record_tabular('Total Time (s)', self._time_total)
         
         self.logger.dump_tabular(with_prefix=False, with_timestamp=False)
 
@@ -196,6 +205,7 @@ class MBMRL:
         if resume:
             params = self.logger.load_params(load_iter)
             start_iter = self._set_params(params)
+            self._set_stats(params)
             self.theta.train()
 
             extra_data = self.logger.load_extra_data()
@@ -222,9 +232,9 @@ class MBMRL:
                 # sample M+K steps from dataset
                 traj = self._sample_traj()
                 # do adaptation update, get new theta and gradients
-                new_theta_dict = self._adaptation_update(traj[:self.M])
+                new_theta_dict = self._adaptation_update(self.theta, traj[:self.M])
                 # compute loss using new theta
-                new_loss = self._compute_theta_loss(traj[self.M:], new_theta_dict)
+                new_loss = self._compute_theta_loss(self.theta, traj[self.M:], new_theta_dict)
                 new_losses.append(new_loss)
             self.theta_loss = torch.mean(torch.stack(new_losses))
 
@@ -234,24 +244,53 @@ class MBMRL:
             self._meta_update(self.theta_loss)
 
             self._end_iteration()
-            self.logger.save_params(i, self._get_params(i))
+            params_to_be_saved = self._get_params(i)
+            params_to_be_saved.update(self._get_stats())
+            self.logger.save_params(i, params_to_be_saved)
             self.logger.save_extra_data(self._get_extra_data())
 
-    def test(self, task, iteration_num, render):
+    def test(self, task, seed, iteration_num, render, load_iter=None):
+        set_seed(seed)
+        iteration_num = int(iteration_num)
+
+        gt.reset()
+        gt.set_def_unique(False)
+        start_iter = 0
+
+        params = self.logger.load_params(load_iter)
+        start_iter = self._set_params(params)
+        self.theta.train()
+        extra_data = self.logger.load_extra_data()
+        self._set_extra_data(extra_data)
+
         rollout = []
         state = task.reset()
         self.controller.set_task(task)
-        for i in range(iteration_num):
-            past_traj = rollout[-self.M:]
-            new_theta_dict = self._adaptation_update(past_traj)
-            action = self.controller.plan(self.theta, state, new_theta_dict)
-            next_state, _, done, _ = task.step(action)
-            self.theta.load_state_dict(new_theta_dict)
-            if render:
-                # TODO: check render() arguments
-                task.render()
-            rollout.append([torch.tensor(state), torch.tensor(action), torch.tensor(next_state)])
-            if done:
-                rollout = []
-                state = task.reset()
+            
+        for i in gt.timed_for(range(start_iter, iteration_num), save_itrs=True):
 
+            done = False
+            reward_sum = 0
+            while not done:
+                past_traj = rollout[-self.M:]
+                new_theta_dict = self._adaptation_update(self.theta, past_traj)
+                action = self.controller.plan(self.theta, state, new_theta_dict)
+                next_state, reward, done, _ = task.step(action)
+                reward_sum += reward
+                if new_theta_dict is not None:
+                    self.theta.load_state_dict(new_theta_dict)
+                if render:
+                    task.render()
+
+                if action.shape == ():
+                    action = [action]
+                
+                rollout.append([torch.tensor(state, dtype=torch.float),
+                    torch.tensor(action, dtype=torch.float),
+                    torch.tensor(next_state, dtype=torch.float)])
+                
+                if done:
+                    rollout = []
+                    state = task.reset()
+
+            print('Iteration:', i, 'Reward:', reward_sum)
