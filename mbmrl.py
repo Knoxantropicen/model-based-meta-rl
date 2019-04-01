@@ -79,14 +79,18 @@ class MBMRL:
     def _compute_theta_loss(self, traj, new_theta=None):
         # traj: [[s1, a1, s2], [s2, a2, s3], ...]
         assert traj
-        loss = torch.tensor([0.0], requires_grad=True)
+        losses = []
         for transition in traj:
             state, action, next_state = transition
             dyn_input = torch.cat((state, action), 0)
             delta_state = self.theta(dyn_input, new_params=new_theta)
-            dyn_normal = Normal(state + delta_state)
-            loss -= dyn_normal.log_prob(next_state)
+            # TODO: check if implementation of probability is correct
+            delta_mean, delta_std = delta_state.split(len(delta_state) // 2)
+            delta_std = torch.abs(delta_std)
+            dyn_normal = Normal(state + delta_mean, delta_std)
+            losses.append(torch.sum(dyn_normal.log_prob(next_state)))
             self._n_model_steps_total += 1
+        loss = torch.mean(torch.stack(losses))
         return loss
 
     def _adaptation_update(self, traj):
@@ -142,16 +146,11 @@ class MBMRL:
             t += 1
             self._n_task_steps_total += 1
             if done:
-                if t < self.rollout_len:
-                    rollout = []
-                    state = task.reset()
-                    t = 0
-                    # TODO: what if trajectory is always shorter than M+K
-                    print('collect trajectory failed, rollout not long enough')
+                state = task.reset()
         return rollout
 
     def _sample_traj(self):
-        rollout = np.random.choice(self.dataset)
+        rollout = self.dataset[np.random.choice(len(self.dataset))]
         start_idx = np.random.choice(len(rollout) + 1 - self.M - self.K)
         traj = rollout[start_idx: start_idx + self.M + self.K]
         return traj
@@ -176,7 +175,7 @@ class MBMRL:
         iter_time = sample_time + adaptation_time + meta_time
         total_time = gt.get_times().total
 
-        self.logger.record_tabular('Model Loss', self.theta_loss)
+        self.logger.record_tabular('Model Loss', np.float32(self.theta_loss.data))
         self.logger.record_tabular('Dataset Size', len(self.dataset))
         self.logger.record_tabular('Total Model Steps', self._n_model_steps_total)
         self.logger.record_tabular('Total Task Steps', self._n_task_steps_total)
@@ -227,7 +226,7 @@ class MBMRL:
                 # compute loss using new theta
                 new_loss = self._compute_theta_loss(traj[self.M:], new_theta_dict)
                 new_losses.append(new_loss)
-            self.theta_loss = torch.mean(new_losses)
+            self.theta_loss = torch.mean(torch.stack(new_losses))
 
             # do meta update on theta and phi
             gt.stamp('meta')

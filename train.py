@@ -42,7 +42,7 @@ def main():
     ob_shape, ac_shape = check_task(tasks)
 
     # build dynamics network
-    model = Net(input_shape=ob_shape + ac_shape, output_shape=ob_shape, **cfgs['net'])
+    model = Net(input_shape=ob_shape + ac_shape, output_shape=ob_shape * 2, **cfgs['net'])
 
     # build controller for adaptation
     controller = MPPI(**cfgs['controller'])

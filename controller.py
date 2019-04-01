@@ -50,7 +50,8 @@ class MPPI(Controller):
             for t in range(self.T):
                 action = torch.tensor(self.U[t] + noise[k, t, :])
                 delta_state = dynamics(torch.cat((state, action), 0), new_dynamics_params)
-                state += delta_state
+                delta_mean, _ = delta_state.split(len(delta_state) // 2)
+                state += delta_mean
                 costs[k] += self.task.env.get_cost(state) + self.lamda * np.dot(self.U[t], noise[k, t, :]) / self.noise_sigma
         return costs
 
