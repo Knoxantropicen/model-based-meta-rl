@@ -5,34 +5,27 @@ import torch.nn.functional as F
 class Net(nn.Module):
     def __init__(self, input_shape, output_shape, hid_shape, hid_num, activation='tanh'):
         super().__init__()
-        self.fc1 = nn.Linear(input_shape, hid_shape)
-        self.fc2 = nn.Linear(hid_shape, hid_shape)
-        self.fc3 = nn.Linear(hid_shape, output_shape)
         self.hid_num = hid_num
         if activation == 'tanh':
-            self.activation = F.tanh
+            self.activation = [nn.Tanh, torch.tanh]
         elif activation == 'relu':
-            self.activation = F.relu
+            self.activation = [nn.ReLU, torch.relu]
         else:
             raise Exception('unsupported activation type')
 
+        layers = [nn.Linear(input_shape, hid_shape), self.activation[0]()]
+        for _ in range(self.hid_num):
+            layers.extend([nn.Linear(hid_shape, hid_shape), self.activation[0]()])
+        layers.append(nn.Linear(hid_shape, output_shape))
+        self.model = nn.Sequential(*layers)
+
     def forward(self, x, new_params=None):
         if new_params is None:
-            x = self.activation(self.fc1(x))
-            for _ in range(self.hid_num):
-                x = self.activation(self.fc2(x))
-            x = self.fc3(x)
-            return x
+            return self.model(x)
         else:
-            x = F.linear(x, new_params['fc1.weight'], new_params['fc1.bias'])
-            x = self.activation(x)
-            if self.hid_num > 1:
-                for i in range(self.hid_num):
-                    x = F.linear(x, new_params['fc2.' + str(i) + '.weight'], new_params['fc2.' + str(i) + '.bias'])
-                    x = self.activation(x)
-            elif self.hid_num == 1:
-                x = F.linear(x, new_params['fc2.weight'], new_params['fc2.bias'])
-                x = self.activation(x)
-            x = F.linear(x, new_params['fc3.weight'], new_params['fc3.bias'])
+            for i in range(self.hid_num + 1):
+                x = F.linear(x, new_params['model.%d.weight' % (i * 2)], new_params['model.%d.bias' % (i * 2)])
+                x = self.activation[1](x)
+            x = F.linear(x, new_params['model.%d.weight' % ((self.hid_num + 1) * 2)], new_params['model.%d.bias' % ((self.hid_num + 1) * 2)])
             return x
             
