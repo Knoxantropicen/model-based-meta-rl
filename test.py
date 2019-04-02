@@ -6,8 +6,8 @@ from mbmrl import MBMRL
 from controller import MPPI
 from net import Net
 from config import test_task, test_cfg, controller_cfg, net_cfg
-from utils import check_task, load_cfgs
-from logger import setup_logger, create_log_dir
+from tools.utils import check_task, load_cfgs
+from tools.logger import setup_logger, create_log_dir
 
 cfgs = {
     'test_task': test_task,

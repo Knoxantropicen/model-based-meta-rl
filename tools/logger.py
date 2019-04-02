@@ -8,8 +8,8 @@ import pickle
 import csv
 
 import config
-from utils import mkdir, save_cfgs
-from tabulate import tabulate
+from tools.utils import mkdir, save_cfgs
+from tools.tabulate import tabulate
 
 class Logger:
     '''

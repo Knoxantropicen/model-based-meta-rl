@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from utils import get_space_shape
+from tools.utils import get_space_shape
 
 
 class Controller:

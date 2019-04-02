@@ -10,7 +10,7 @@ import os.path as osp
 import gtimer as gt
 
 from net import Net
-from utils import set_seed
+from tools.utils import set_seed
 
 
 class MBMRL:
