@@ -15,7 +15,7 @@ from net import Net
 from tools.utils import set_seed, zero_grad, loss_func
 
 def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, rollout_len, M,
-    phi, adaptation_update_num, loss_type, pred_std):
+    phi, adaptation_update_num, loss_type, loss_scale, pred_std):
     rollouts = []
     state = task.reset()
     controller.set_task(task)
@@ -34,7 +34,7 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
                     st, ac, next_st = transition
                     delta_st = theta(torch.cat((st, ac), 0), new_params=new_theta_dict)
                     pred_next_st = st + delta_st
-                    loss = loss_func(loss_type, pred_next_st, next_st, std=pred_std)
+                    loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
                     losses.append(loss)
                     _n_model_steps_total += 1
                 loss = torch.mean(torch.stack(losses))
@@ -52,7 +52,7 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
                         st, act, next_st = transition
                         delta_st = theta(torch.cat((st, ac), 0), new_params=new_theta_dict)
                         pred_next_st = st + delta_st
-                        new_loss = loss_func(loss_type, pred_next_st, next_st, std=pred_std)
+                        new_loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
                         new_losses.append(new_loss)
                         _n_model_steps_total += 1
                     new_loss = torch.mean(torch.stack(new_losses))
@@ -85,7 +85,7 @@ class MBMRL:
     Original Paper: Nagabandi et al., 2019, 'Learning to Adapt in Dynamic, Real-World Environments through Meta-Reinforcement Learning'
     '''
     def __init__(self, tasks, model, controller, logger, seed, iteration_num, task_sample_num, task_sample_frequency, eval_frequency,
-            rollout_len, rollout_num, adaptation_update_num, M, K, beta, eta, phi, dataset_size, pred_std, loss_type, num_threads):
+            rollout_len, rollout_num, adaptation_update_num, M, K, beta, eta, phi, dataset_size, pred_std, loss_type, loss_scale, num_threads):
         set_seed(seed)
         self.logger = logger
 
@@ -106,6 +106,7 @@ class MBMRL:
         self.eta = eta
         self.pred_std = pred_std
         self.loss_type = loss_type
+        self.loss_scale = loss_scale
         self.num_threads = num_threads
 
         self.theta = model
@@ -201,7 +202,7 @@ class MBMRL:
             state, action, next_state = transition
             delta_state = theta(torch.cat((state, action), 0), new_params=new_theta)
             pred_next_state = state + delta_state
-            loss = loss_func(self.loss_type, pred_next_state, next_state, std=self.pred_std)
+            loss = self.loss_scale * loss_func(self.loss_type, pred_next_state, next_state, std=self.pred_std)
             losses.append(loss)
             self._n_model_steps_total += 1
         loss = torch.mean(torch.stack(losses))
@@ -243,7 +244,7 @@ class MBMRL:
         rollout_num_per_thread = self.rollout_num // self.num_threads
         for pid in range(self.num_threads):
             worker_args = (pid, queue, task, self.controller, self.theta, rollout_num_per_thread, self.rollout_len, self.M,
-                self.phi, self.adaptation_update_num, self.loss_type, self.pred_std)
+                self.phi, self.adaptation_update_num, self.loss_type, self.loss_scale, self.pred_std)
             workers.append(mp.Process(target=_collect_traj_per_thread, args=worker_args))
         for worker in workers:
             worker.start()
@@ -323,7 +324,7 @@ class MBMRL:
             mean_rewards.append(np.mean(rewards))
         return mean_rewards
 
-    def test_performance(self):
+    def debug(self):
         for i in range(self.iteration_num):
             print('Iteration ' + str(i))
             if i % self.task_sample_frequency == 0:
