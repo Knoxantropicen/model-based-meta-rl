@@ -8,6 +8,7 @@ import os
 import os.path as osp
 import gtimer as gt
 import torch.multiprocessing as mp
+mp.set_sharing_strategy('file_system')
 mp = mp.get_context('spawn')
 
 from net import Net
