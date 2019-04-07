@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from torch.distributions.normal import Normal
 import gym
 import json
 import os
@@ -30,6 +31,26 @@ def check_task(tasks):
         else:
             assert ob_shape == task_ob_shape and ac_shape == task_ac_shape, 'shape mismatch between tasks'
     return ob_shape, ac_shape
+
+def loss_nll(*args, **kwargs):
+    normal = Normal(loc=args[0], scale=kwargs['std'])
+    return torch.sum(-normal.log_prob(args[1]))
+    
+def loss_mse(*args, **kwargs):
+    return torch.sum(torch.pow(args[0] - args[1], 2))
+
+def loss_func(loss_type, *args, **kwargs):
+    if loss_type == 'nll':
+        return loss_nll(*args, **kwargs)
+    elif loss_type == 'mse':
+        return loss_mse(*args, **kwargs)
+    else:
+        raise NotImplementedError
+
+def zero_grad(params):
+    for p in params:
+        if p.grad is not None:
+            p.grad.zero_()
 
 def mkdir(path):
     os.makedirs(path, exist_ok=True)

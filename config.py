@@ -13,26 +13,30 @@ train_cfg = {
         'iteration_num': 1e3,
         'task_sample_num': 100,
         'task_sample_frequency': 5,
-        # adaption
-        'adaption_update_num': 5,
+        'eval_frequency': 5,
+        # adaptation
+        'adaptation_update_num': 5,
         # learning rate
-        'phi': 1e-2,
-        'beta': 1e-3,
-        'eta': 1e-3,
+        'phi': 1e-3,
+        'beta': 3e-4,
+        'eta': 3e-4,
         # sample
-        'M': 10,
-        'K': 8,
-        'rollout_len': 30, # >= M+K
+        'M': 5,
+        'K': 4,
+        'rollout_len': 50, # >= M+K
+        'rollout_num': 100,
         # dataset
         'dataset_size': 1e4,
         # model prediction
         'pred_std': 0.1,
+        # loss
+        'loss_type': 'mse',
         }
 
 test_cfg = {
         'seed': 0,
         'iteration_num': 1e3,
-        'render': True,
+        'render': False,
         }
 
 net_cfg = {
@@ -43,5 +47,5 @@ net_cfg = {
 
 controller_cfg = {
         'K': 10, # sample num
-        'T': 5, # horizon
+        'T': 3, # horizon
         }

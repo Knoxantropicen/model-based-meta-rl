@@ -40,7 +40,7 @@ def main():
     model = Net(input_shape=ob_shape + ac_shape, output_shape=ob_shape, **cfgs['net'])
     controller = MPPI(**cfgs['controller'])
 
-    algo = MBMRL(None, model, controller, logger, **cfgs['train'])
+    algo = MBMRL(None, model, controller, logger, num_threads=1, **cfgs['train'])
     algo.test(test_task, load_iter=args.iter, **cfgs['test'])
 
 
