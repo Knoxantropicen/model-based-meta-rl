@@ -322,6 +322,27 @@ class MBMRL:
             mean_rewards.append(np.mean(rewards))
         return mean_rewards
 
+    def test_performance(self):
+        for i in range(self.iteration_num):
+            print('Iteration ' + str(i))
+            if i % self.task_sample_frequency == 0:
+                task = self._sample_task()
+                rollouts = self._collect_traj(task)
+                self.dataset.extend(rollouts)
+                np.random.shuffle(self.dataset)
+            new_losses = []
+            for _ in range(self.task_sample_num):
+                traj = self._sample_traj()
+                new_theta_dict = self._adaptation_update(self.theta, traj[:self.M])
+                new_loss = self._compute_theta_loss(self.theta, traj[self.M:], new_theta_dict)
+                new_losses.append(new_loss)
+            self.theta_loss = torch.mean(torch.stack(new_losses))
+            self._meta_update(self.theta_loss)
+            if i % self.eval_frequency == 0:
+                mean_rewards = self.evaluate()
+                for task, mean_reward in zip(self.tasks, mean_rewards):
+                    print(task.env.spec.id + ' Reward: ' + str(mean_reward))
+
     def train(self, resume=False, load_iter=None):
         gt.reset()
         gt.set_def_unique(False)
