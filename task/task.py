@@ -37,5 +37,5 @@ class CartPoleTask(Task, CartPoleEnv):
                 or x < self.x_threshold \
                 or theta < -self.theta_threshold_radians \
                 or theta > self.theta_threshold_radians
-        cost = 1 if done else 0
+        cost = 0 if done else -1
         return cost
