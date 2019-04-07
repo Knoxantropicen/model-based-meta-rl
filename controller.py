@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-
 from tools.utils import get_space_shape
 
 
@@ -51,7 +50,7 @@ class MPPI(Controller):
                 action = torch.tensor(self.U[t] + noise[k, t, :])
                 delta_state = dynamics(torch.cat((state, action), 0), new_dynamics_params)
                 state += delta_state
-                costs[k] += self.task.env.get_cost(state) + self.lamda * np.dot(self.U[t], noise[k, t, :]) / self.noise_sigma
+                costs[k] += self.task.env.get_cost(state)
         return costs
 
     def _compute_importance_weights(self, costs):
@@ -64,6 +63,7 @@ class MPPI(Controller):
         noise = self._sample_noise()
         costs = self._compute_costs(dynamics, state, noise, new_dynamics_params)
         weights = self._compute_importance_weights(costs)
-        action = self.U[0] + np.sum(weights * noise[:, 0, :])
+        action = self.U[0] + np.sum(weights * noise[:, 0, :].T)
+
         return action
 
