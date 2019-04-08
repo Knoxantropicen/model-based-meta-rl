@@ -1,3 +1,5 @@
 *.swp
 .vscode/
 __pycache__/
+data/
+plot/
