@@ -25,7 +25,7 @@ def main():
     parser.add_argument('--snapshot-gap', type=int, default=1)
     parser.add_argument('--resume', default=False, action='store_true')
     parser.add_argument('--iter', type=int, default=None)
-    parser.add_argument('--num_threads', type=int, default=1)
+    parser.add_argument('--num-threads', type=int, default=1)
     args = parser.parse_args()
 
     logger = setup_logger(first_time=not args.resume, exp_prefix=args.exp_name, seed=train_cfg['seed'],

@@ -182,6 +182,7 @@ class MBMRL:
 
     def _start_iteration(self, iter):
         self.logger.push_prefix('Iteration #%d | ' % iter)
+        self.logger.record_tabular('Iteration', iter)
 
     def _end_iteration(self, iter):
         self._record_stats()
