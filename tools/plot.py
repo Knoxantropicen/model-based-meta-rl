@@ -27,7 +27,7 @@ def get_index_from_csv_head(desc, name):
 
 
 def plot_rewards(progress_csvs, save_dir,
-    value='loss', by='iter', do_fit=False, fit_order=6):
+    value='loss', by='iter', do_fit=False, fit_order=6, y_range=None, x_range=None):
 
     ax = plt.gca()
 
@@ -37,9 +37,19 @@ def plot_rewards(progress_csvs, save_dir,
         exp_names.append(name)
 
         x = data[:, desc.index(LOG_MAP[by])]
+        if x_range is not None:
+            left = np.argmax(np.array(x) >= x_range[0])
+            right = np.argmin(np.array(x) <= x_range[1])
+            if right == 0:
+                right = len(x) - 1
+            x = x[left:right]
 
         value_idx = get_index_from_csv_head(desc, LOG_MAP[value])
         y = data[:, value_idx]
+        if x_range is not None:
+            y = y[left:right]
+        if y_range is not None:
+            y = np.clip(y, y_range[0], y_range[1])
 
         color = next(ax._get_lines.prop_cycler)['color']
         if do_fit:
@@ -72,9 +82,15 @@ def main():
     parser.add_argument('--fit', default=False, action='store_true')
     parser.add_argument('--order', type=int, default=6)
     parser.add_argument('--by', default='iter')
+    parser.add_argument('--y-range', default=None, type=float, nargs='+')
+    parser.add_argument('--x-range', default=None, type=float, nargs='+')
     args = parser.parse_args()
     for val in [args.value, args.by]:
         assert val in LOG_MAP, '%s is invalid argument!' % val
+    if args.x_range is not None:
+        assert len(args.x_range) == 2, 'invalid range input!'
+    if args.y_range is not None:
+        assert len(args.y_range) == 2, 'invalid range input!'
 
     progress_csvs = []
     for exp_name in args.exp_name:
@@ -87,7 +103,7 @@ def main():
 
     save_dir = os.path.join(ROOT_DIR, 'plot')
     plot_rewards(progress_csvs, save_dir,
-        value=args.value, by=args.by, do_fit=args.fit, fit_order=args.order)
+        value=args.value, by=args.by, do_fit=args.fit, fit_order=args.order, y_range=args.y_range, x_range=args.x_range)
 
 
 if __name__ == '__main__':
