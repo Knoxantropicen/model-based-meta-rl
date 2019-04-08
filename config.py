@@ -14,6 +14,7 @@ train_cfg = {
         'task_sample_num': 32,
         'task_sample_frequency': 5,
         'eval_frequency': 5,
+        'eval_sample_num': 5,
         # adaptation
         'adaptation_update_num': 5,
         # learning rate
@@ -21,17 +22,17 @@ train_cfg = {
         'beta': 1e-3,
         'eta': 3e-4,
         # sample
-        'M': 16,
-        'K': 16,
-        'rollout_len': 50, # >= M+K
+        'M': 8,
+        'K': 8,
+        'rollout_len': 20, # >= M+K
         'rollout_num': 8,
         # dataset
         'dataset_size': 1e3,
         # model prediction
         'pred_std': 0.1,
         # loss
-        'loss_type': 'nll',
-        'loss_scale': 1,
+        'loss_type': 'mse',
+        'loss_scale': 100,
         }
 
 test_cfg = {
@@ -47,8 +48,8 @@ net_cfg = {
         }
 
 controller_cfg = {
-        'K': 100, # sample num
-        'T': 10, # horizon
+        'K': 200, # sample num
+        'T': 8, # horizon
         'noise_mu': 0.0,
         'noise_sigma': 10.0,
         'lamda': 1.0,

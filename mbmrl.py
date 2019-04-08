@@ -79,12 +79,31 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
     else:
         queue.put([rollouts, _n_model_steps_total, _n_task_steps_total])
 
+def _evaluate_per_thread(queue, tasks, controller, theta):
+    rewards = []
+    for task in tasks:
+        controller.set_task(task)
+        state = task.reset()
+        done = False
+        reward_sum = 0
+        while not done:
+            action = controller.plan(theta, state)
+            state, reward, done, _ = task.step(action)
+            reward_sum += reward
+        rewards.append(reward_sum)
+    
+    if queue is None:
+        return rewards
+    else:
+        queue.put(rewards)
+
+
 class MBMRL:
     ''' 
     Model-Based Meta-Reinforcement Learning
     Original Paper: Nagabandi et al., 2019, 'Learning to Adapt in Dynamic, Real-World Environments through Meta-Reinforcement Learning'
     '''
-    def __init__(self, tasks, model, controller, logger, seed, iteration_num, task_sample_num, task_sample_frequency, eval_frequency,
+    def __init__(self, tasks, model, controller, logger, seed, iteration_num, task_sample_num, task_sample_frequency, eval_frequency, eval_sample_num,
             rollout_len, rollout_num, adaptation_update_num, M, K, beta, eta, phi, dataset_size, pred_std, loss_type, loss_scale, num_threads):
         set_seed(seed)
         self.logger = logger
@@ -97,6 +116,7 @@ class MBMRL:
         self.task_sample_num = int(task_sample_num)
         self.task_sample_frequency = int(task_sample_frequency)
         self.eval_frequency = int(eval_frequency)
+        self.eval_sample_num = int(eval_sample_num)
         self.rollout_len = int(rollout_len)
         self.rollout_num = int(rollout_num)
         self.adaptation_update_num = int(adaptation_update_num)
@@ -307,7 +327,23 @@ class MBMRL:
         self._set_extra_data(extra_data)
         return start_iter
 
-    def evaluate(self):
+    def _evaluate_parallel(self):
+        workers = []
+        queue = mp.Queue()
+        for _ in range(self.eval_sample_num):
+            worker_args = (queue, self.tasks, self.controller, self.theta)
+            workers.append(mp.Process(target=_evaluate_per_thread, args=worker_args))
+        for worker in workers:
+            worker.start()
+
+        mean_rewards = []
+        for _ in workers:
+            rewards = queue.get()
+            mean_rewards.append(rewards)
+        mean_rewards = np.mean(mean_rewards, axis=1)
+        return mean_rewards
+
+    def _evaluate_serial(self):
         mean_rewards = []
         for task in self.tasks:
             rewards = []
@@ -323,6 +359,12 @@ class MBMRL:
                 rewards.append(reward_sum)
             mean_rewards.append(np.mean(rewards))
         return mean_rewards
+
+    def evaluate(self):
+        if self.num_threads > 1:
+            return self._evaluate_parallel()
+        else:
+            return self._evaluate_serial()
 
     def debug(self):
         for i in range(self.iteration_num):
