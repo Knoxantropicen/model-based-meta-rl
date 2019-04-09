@@ -49,7 +49,7 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
                 for _ in range(adaptation_update_num):
                     new_losses = []
                     for transition in past_traj:
-                        st, act, next_st = transition
+                        st, ac, next_st = transition
                         delta_st = theta(torch.cat((st, ac), 0), new_params=new_theta_dict)
                         pred_next_st = st + delta_st
                         new_loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
