@@ -14,6 +14,18 @@ mp = mp.get_context('spawn')
 from net import Net
 from tools.utils import set_seed, zero_grad, loss_func
 
+
+def _aggregate_rollout(rollout, state, action, next_state):
+    if rollout == []:
+        rollout = [torch.stack((torch.tensor(state, dtype=torch.float),)),
+            torch.stack((torch.tensor(action, dtype=torch.float),)),
+            torch.stack((torch.tensor(next_state, dtype=torch.float),))]
+    else:
+        rollout = [torch.cat((rollout[0], torch.tensor(state, dtype=torch.float).view(1, -1))),
+            torch.cat((rollout[1], torch.tensor(action, dtype=torch.float).view(1, -1))),
+            torch.cat((rollout[2], torch.tensor(next_state, dtype=torch.float).view(1, -1)))]
+    return rollout
+
 def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, rollout_len, M,
     phi, adaptation_update_num, loss_type, loss_scale, pred_std):
     rollouts = []
@@ -26,18 +38,14 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
         rollout = []
         t = 0
         while t < rollout_len:
-            past_traj = rollout[-M:]
+            past_traj = [r[-M:] for r in rollout]
             new_theta_dict = None
             if past_traj:
-                losses = []
-                for transition in past_traj:
-                    st, ac, next_st = transition
-                    delta_st = theta(torch.cat((st, ac), 0), new_params=new_theta_dict)
-                    pred_next_st = st + delta_st
-                    loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
-                    losses.append(loss)
-                    _n_model_steps_total += 1
-                loss = torch.mean(torch.stack(losses))
+                st, ac, next_st = past_traj
+                delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
+                pred_next_st = st + delta_st
+                loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
+                _n_model_steps_total += 1
                 d_theta = autograd.grad(loss, theta.parameters())
 
                 new_theta_dict = {key: val.clone() for key, val in theta.state_dict().items()}
@@ -47,15 +55,11 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
                     new_theta_dict[key] = new_theta_params[key]
                 
                 for _ in range(adaptation_update_num):
-                    new_losses = []
-                    for transition in past_traj:
-                        st, ac, next_st = transition
-                        delta_st = theta(torch.cat((st, ac), 0), new_params=new_theta_dict)
-                        pred_next_st = st + delta_st
-                        new_loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
-                        new_losses.append(new_loss)
-                        _n_model_steps_total += 1
-                    new_loss = torch.mean(torch.stack(new_losses))
+                    st, ac, next_st = past_traj
+                    delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
+                    pred_next_st = st + delta_st
+                    new_loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
+                    _n_model_steps_total += 1
                     zero_grad(new_theta_params.values())
                     d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
                     for (key, val), d in zip(theta.named_parameters(), d_theta):
@@ -66,14 +70,12 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
             next_state, _, done, _ = task.step(action)
             if action.shape == ():
                 action = [action]
-            rollout.append([torch.tensor(state, dtype=torch.float), 
-                torch.tensor(action, dtype=torch.float), 
-                torch.tensor(next_state, dtype=torch.float)])
+            rollout = _aggregate_rollout(rollout, state, action, next_state)
             t += 1
             _n_task_steps_total += 1
             if done:
                 state = task.reset()
-            rollouts.append(rollout)
+        rollouts.append(rollout)
     if queue is None:
         return rollouts, _n_model_steps_total, _n_task_steps_total
     else:
@@ -218,15 +220,11 @@ class MBMRL:
     def _compute_theta_loss(self, theta, traj, new_theta=None):
         # traj: [[s1, a1, s2], [s2, a2, s3], ...]
         assert traj
-        losses = []
-        for transition in traj:
-            state, action, next_state = transition
-            delta_state = theta(torch.cat((state, action), 0), new_params=new_theta)
-            pred_next_state = state + delta_state
-            loss = self.loss_scale * loss_func(self.loss_type, pred_next_state, next_state, std=self.pred_std)
-            losses.append(loss)
-            self._n_model_steps_total += 1
-        loss = torch.mean(torch.stack(losses))
+        state, action, next_state = traj
+        delta_state = theta(torch.cat((state, action), 1), new_params=new_theta)
+        pred_next_state = state + delta_state
+        loss = self.loss_scale / len(state) * loss_func(self.loss_type, pred_next_state, next_state, std=self.pred_std)
+        self._n_model_steps_total += 1
         return loss
 
     def _adaptation_update(self, theta, traj):
@@ -286,15 +284,13 @@ class MBMRL:
             rollout = []
             t = 0
             while t < self.rollout_len:
-                past_traj = rollout[-self.M:]
+                past_traj = [r[-self.M:] for r in rollout]
                 new_theta_dict = self._adaptation_update(self.theta, past_traj)
                 action = self.controller.plan(self.theta, state, new_theta_dict)
                 next_state, _, done, _ = task.step(action)
                 if action.shape == ():
                     action = [action]
-                rollout.append([torch.tensor(state, dtype=torch.float), 
-                    torch.tensor(action, dtype=torch.float), 
-                    torch.tensor(next_state, dtype=torch.float)])
+                rollout = _aggregate_rollout(rollout, state, action, next_state)
                 t += 1
                 self._n_task_steps_total += 1
                 if done:
@@ -308,11 +304,20 @@ class MBMRL:
         else:
             return self._collect_traj_serial(task)
 
-    def _sample_traj(self):
-        rollout = self.dataset[np.random.choice(len(self.dataset))]
-        start_idx = np.random.choice(len(rollout) + 1 - self.M - self.K)
-        traj = rollout[start_idx: start_idx + self.M + self.K]
-        return traj
+    def _sample_traj(self, num=1):
+        trajs = []
+        for _ in range(num):
+            rollout = self.dataset[np.random.choice(len(self.dataset))]
+            start_idx = np.random.choice(len(rollout[0]) + 1 - self.M - self.K)
+            end_idx = start_idx + self.M + self.K
+            traj = [r[start_idx: end_idx] for r in rollout]
+            if trajs == []:
+                trajs = traj
+            else:
+                trajs = [torch.cat((trajs[0], traj[0])),
+                    torch.cat((trajs[1], traj[1])),
+                    torch.cat((trajs[2], traj[2]))]
+        return trajs
 
     def _sample_task(self):
         # TODO: support task distribution
@@ -378,8 +383,8 @@ class MBMRL:
             new_losses = []
             for _ in range(self.task_sample_num):
                 traj = self._sample_traj()
-                new_theta_dict = self._adaptation_update(self.theta, traj[:self.M])
-                new_loss = self._compute_theta_loss(self.theta, traj[self.M:], new_theta_dict)
+                new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj])
+                new_loss = self._compute_theta_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
                 new_losses.append(new_loss)
             self.theta_loss = torch.mean(torch.stack(new_losses))
             self._meta_update(self.theta_loss)
@@ -412,9 +417,9 @@ class MBMRL:
                 # sample M+K steps from dataset
                 traj = self._sample_traj()
                 # do adaptation update, get new theta and gradients
-                new_theta_dict = self._adaptation_update(self.theta, traj[:self.M])
+                new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj])
                 # compute loss using new theta
-                new_loss = self._compute_theta_loss(self.theta, traj[self.M:], new_theta_dict)
+                new_loss = self._compute_theta_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
                 new_losses.append(new_loss)
             self.theta_loss = torch.mean(torch.stack(new_losses))
             gt.stamp('adaptation')
@@ -470,9 +475,7 @@ class MBMRL:
                 if action.shape == ():
                     action = [action]
                 
-                rollout.append([torch.tensor(state, dtype=torch.float),
-                    torch.tensor(action, dtype=torch.float),
-                    torch.tensor(next_state, dtype=torch.float)])
+                rollout = _aggregate_rollout(rollout, state, action, next_state)
 
                 t += 1
                 
