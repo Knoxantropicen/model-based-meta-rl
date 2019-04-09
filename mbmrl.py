@@ -217,7 +217,7 @@ class MBMRL:
 
      ##### ALGORITHM #####
 
-    def _compute_theta_loss(self, theta, traj, new_theta=None):
+    def _compute_adaptation_loss(self, theta, traj, new_theta=None):
         # traj: [[s1, a1, s2], [s2, a2, s3], ...]
         assert traj
         state, action, next_state = traj
@@ -231,7 +231,7 @@ class MBMRL:
         if traj == []:
             return None
 
-        loss = self._compute_theta_loss(theta, traj)
+        loss = self._compute_adaptation_loss(theta, traj)
         d_theta = autograd.grad(loss, theta.parameters())
 
         new_theta_dict = {key: val.clone() for key, val in theta.state_dict().items()}
@@ -241,7 +241,7 @@ class MBMRL:
             new_theta_dict[key] = new_theta_params[key]
         
         for _ in range(self.adaptation_update_num):
-            new_loss = self._compute_theta_loss(theta, traj, new_theta_dict)
+            new_loss = self._compute_adaptation_loss(theta, traj, new_theta_dict)
             zero_grad(new_theta_params.values())
             d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
             for (key, val), d in zip(theta.named_parameters(), d_theta):
@@ -384,7 +384,7 @@ class MBMRL:
             for _ in range(self.task_sample_num):
                 traj = self._sample_traj()
                 new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj])
-                new_loss = self._compute_theta_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
+                new_loss = self._compute_adaptation_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
                 new_losses.append(new_loss)
             self.theta_loss = torch.mean(torch.stack(new_losses))
             self._meta_update(self.theta_loss)
@@ -419,7 +419,7 @@ class MBMRL:
                 # do adaptation update, get new theta and gradients
                 new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj])
                 # compute loss using new theta
-                new_loss = self._compute_theta_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
+                new_loss = self._compute_adaptation_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
                 new_losses.append(new_loss)
             self.theta_loss = torch.mean(torch.stack(new_losses))
             gt.stamp('adaptation')
