@@ -71,6 +71,7 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
             if action.shape == ():
                 action = [action]
             rollout = _aggregate_rollout(rollout, state, action, next_state)
+            state = next_state
             t += 1
             _n_task_steps_total += 1
             if done:
@@ -199,7 +200,8 @@ class MBMRL:
         sample_time = times_itrs['sample'][-1]
         adaptation_time = times_itrs['adaptation'][-1]
         meta_time = times_itrs['meta'][-1]
-        iter_time = sample_time + adaptation_time + meta_time
+        eval_time = times_itrs['eval'][-1]
+        iter_time = sample_time + adaptation_time + meta_time + eval_time
         self._time_total = gt.get_times().total + self._time_total_prev
 
         self.logger.record_tabular('Model Loss', np.float32(self.theta_loss.data))
@@ -210,6 +212,7 @@ class MBMRL:
         self.logger.record_tabular('Sample Time (s)', sample_time)
         self.logger.record_tabular('Adaptation Time (s)', adaptation_time)
         self.logger.record_tabular('Meta Time (s)', meta_time)
+        self.logger.record_tabular('Evaluation Time (s)', eval_time)
         self.logger.record_tabular('Iteration Time (s)', iter_time)
         self.logger.record_tabular('Total Time (s)', self._time_total)
         
@@ -260,11 +263,13 @@ class MBMRL:
     def _collect_traj_parallel(self, task):
         workers = []
         queue = mp.Queue()
-        rollout_num_per_thread = self.rollout_num // self.num_threads
-        for pid in range(self.num_threads):
-            worker_args = (pid, queue, task, self.controller, self.theta, rollout_num_per_thread, self.rollout_len, self.M,
-                self.phi, self.adaptation_update_num, self.loss_type, self.loss_scale, self.pred_std)
-            workers.append(mp.Process(target=_collect_traj_per_thread, args=worker_args))
+        rollout_nums = np.full(self.num_threads, self.rollout_num // self.num_threads, dtype=np.int)
+        rollout_nums[:self.rollout_num % self.num_threads] += 1
+        for pid, rollout_num_per_thread in zip(range(self.num_threads), rollout_nums):
+            if rollout_num_per_thread > 0:
+                worker_args = (pid, queue, task, self.controller, self.theta, rollout_num_per_thread, self.rollout_len, self.M,
+                    self.phi, self.adaptation_update_num, self.loss_type, self.loss_scale, self.pred_std)
+                workers.append(mp.Process(target=_collect_traj_per_thread, args=worker_args))
         for worker in workers:
             worker.start()
         
@@ -291,6 +296,7 @@ class MBMRL:
                 if action.shape == ():
                     action = [action]
                 rollout = _aggregate_rollout(rollout, state, action, next_state)
+                state = next_state
                 t += 1
                 self._n_task_steps_total += 1
                 if done:
@@ -367,7 +373,7 @@ class MBMRL:
         return mean_rewards
 
     def evaluate(self):
-        if self.num_threads > 1:
+        if self.num_threads > 1 and self.eval_sample_num > 1:
             return self._evaluate_parallel()
         else:
             return self._evaluate_serial()
@@ -434,6 +440,7 @@ class MBMRL:
                 mean_rewards = self.evaluate()
                 for task, mean_reward in zip(self.tasks, mean_rewards):
                     self.logger.log(task.env.spec.id + ' Reward: ' + str(mean_reward))
+            gt.stamp('eval')
 
             self._end_iteration(i)
 
@@ -476,7 +483,7 @@ class MBMRL:
                     action = [action]
                 
                 rollout = _aggregate_rollout(rollout, state, action, next_state)
-
+                state = next_state
                 t += 1
                 
                 if done:
