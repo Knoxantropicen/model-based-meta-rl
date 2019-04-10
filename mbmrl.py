@@ -16,6 +16,10 @@ from tools.utils import set_seed, zero_grad, loss_func
 
 
 def _aggregate_rollout(rollout, state, action, next_state):
+    '''
+    add transition (state, action, next_state) to rollout
+    rollout shape: [[s1, s2, ..., sn], [a1, a2, ..., an], [s'1, s'2, ..., s'n]]
+    '''
     if rollout == []:
         rollout = [torch.stack((torch.tensor(state, dtype=torch.float),)),
             torch.stack((torch.tensor(action, dtype=torch.float),)),
@@ -28,6 +32,10 @@ def _aggregate_rollout(rollout, state, action, next_state):
 
 def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, rollout_len, M,
     phi, adaptation_update_num, loss_type, loss_scale, pred_std):
+    '''
+    per thread function of parallel trajectory collection
+    see MBMRL._collect_traj_serial() for method description
+    '''
     rollouts = []
     state = task.reset()
     controller.set_task(task)
@@ -83,6 +91,10 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
         queue.put([rollouts, _n_model_steps_total, _n_task_steps_total])
 
 def _evaluate_per_thread(queue, tasks, controller, theta):
+    '''
+    per thread function of reward evaluation
+    see MBMRL._evaluate_serial() for method description
+    '''
     rewards = []
     for task in tasks:
         controller.set_task(task)
@@ -111,31 +123,31 @@ class MBMRL:
         set_seed(seed)
         self.logger = logger
 
-        self.tasks = np.array(tasks)
-        self.controller = controller
-        self.dataset = deque(maxlen=int(dataset_size))
+        self.tasks = np.array(tasks)    # training tasks
+        self.controller = controller    # MPC controller
+        self.dataset = deque(maxlen=int(dataset_size))  # dataset D storing rollouts containing (s, a, s') transition
 
-        self.iteration_num = int(iteration_num)
-        self.task_sample_num = int(task_sample_num)
-        self.task_sample_frequency = int(task_sample_frequency)
-        self.eval_frequency = int(eval_frequency)
-        self.eval_sample_num = int(eval_sample_num)
-        self.rollout_len = int(rollout_len)
-        self.rollout_num = int(rollout_num)
-        self.adaptation_update_num = int(adaptation_update_num)
-        self.M = M
-        self.K = K
-        self.beta = beta
-        self.eta = eta
-        self.pred_std = pred_std
-        self.loss_type = loss_type
-        self.loss_scale = loss_scale
-        self.num_threads = num_threads
+        self.iteration_num = int(iteration_num) # number of total training iteration
+        self.task_sample_num = int(task_sample_num) # number of sampled tasks N
+        self.task_sample_frequency = int(task_sample_frequency) # tasks sampling frequency n_s
+        self.eval_frequency = int(eval_frequency)   # reward evaluation frequency
+        self.eval_sample_num = int(eval_sample_num) # number of samples for evaluation
+        self.rollout_len = int(rollout_len) # max length of rollout in trajectory collection, i.e., number of (s, a, s') transition in a single rollout
+        self.rollout_num = int(rollout_num) # number of rollouts for once trajectory collection
+        self.adaptation_update_num = int(adaptation_update_num) # number of updates per adaptation
+        self.M = M  # number of previous datapoints
+        self.K = K  # number of future datapoints
+        self.beta = beta    # meta model learning rate
+        self.eta = eta  # learning rate of update rule of adaptation (phi)
+        self.pred_std = pred_std    # std for use NLL loss (TODO: make it learnable)
+        self.loss_type = loss_type  # type of loss between real and predicted value of next state
+        self.loss_scale = loss_scale    # scaling factor of loss
+        self.num_threads = num_threads  # number of threads for parallization
 
-        self.theta = model
-        self.meta_optimizer = torch.optim.Adam(self.theta.parameters(), lr=self.beta)
-        self.phi = torch.tensor(phi, requires_grad=True)
-        self.lr_optimizer = torch.optim.Adam([self.phi], lr=self.eta)
+        self.theta = model  # dynamics neural network model
+        self.meta_optimizer = torch.optim.Adam(self.theta.parameters(), lr=self.beta)   # optimizer for dynamics
+        self.phi = torch.tensor(phi, requires_grad=True)    # update rule of adaptation (a learning rate in GrBAL)
+        self.lr_optimizer = torch.optim.Adam([self.phi], lr=self.eta)   # optimizer for update rule of adaptation
 
         self.theta_loss = None
         self.eval_rewards = []
@@ -224,8 +236,6 @@ class MBMRL:
      ##### ALGORITHM #####
 
     def _compute_adaptation_loss(self, theta, traj, new_theta=None):
-        # traj: [[s1, a1, s2], [s2, a2, s3], ...]
-        assert traj
         state, action, next_state = traj
         delta_state = theta(torch.cat((state, action), 1), new_params=new_theta)
         pred_next_state = state + delta_state
