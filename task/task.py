@@ -49,10 +49,14 @@ class CartPoleTask(Task, CartPoleEnv):
 
 class PendulumTask(Task, PendulumEnv):
     def get_cost(self, state, action):
-        th, thdot = state
+        costh, sinth, thdot = state
+        costh, sinth = np.clip(costh, -1, 1), np.clip(sinth, -1, 1)
+        def get_from_cos_sin(cosx, sinx):
+            xc, xs = np.arccos(cosx), np.arcsin(sinx)
+            return xc if xs > 0 or (xs == 0 and xc < 0.5 * np.pi) else -xc
+        th = get_from_cos_sin(costh, sinth)
         action = np.clip(action, -self.max_torque, self.max_torque)[0]
         def angle_normalize(x):
             return (((x + np.pi) % (2 * np.pi)) - np.pi)
         cost = angle_normalize(th) ** 2 + 0.1 * thdot ** 2 + 0.001 * action ** 2
         return cost
-        
