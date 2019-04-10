@@ -7,3 +7,9 @@ register(
     max_episode_steps=200,
     reward_threshold=195.0,
 )
+
+register(
+    id='PendulumTask-v0',
+    entry_point='task.task:PendulumTask',
+    max_episode_steps=200,
+)

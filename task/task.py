@@ -1,10 +1,10 @@
 import numpy as np
 import gym
 import gym.spaces as gsp
-from gym.envs.classic_control import CartPoleEnv
+from gym.envs.classic_control import CartPoleEnv, PendulumEnv
 
 class Task(gym.Env):
-    def get_cost(self, state):
+    def get_cost(self, state, action):
         raise NotImplementedError
     
     def reformat_action(self, action):
@@ -31,7 +31,7 @@ class Task(gym.Env):
 
 # custom tasks
 class CartPoleTask(Task, CartPoleEnv):
-    def get_cost(self, state):
+    def get_cost(self, state, action):
         x, _, theta, _ = state
         done = x < -self.x_threshold \
                 or x < self.x_threshold \
@@ -39,3 +39,20 @@ class CartPoleTask(Task, CartPoleEnv):
                 or theta > self.theta_threshold_radians
         cost = 0 if done else -1
         return cost
+
+    def step(self, action, *args, **kwargs):
+        action = self.reformat_action(action)
+        next_state, reward, done, info = super().step(action, *args, **kwargs)
+        if done:
+            reward = 0
+        return np.float32(next_state), reward, done, info
+
+class PendulumTask(Task, PendulumEnv):
+    def get_cost(self, state, action):
+        th, thdot = state
+        action = np.clip(action, -self.max_torque, self.max_torque)[0]
+        def angle_normalize(x):
+            return (((x + np.pi) % (2 * np.pi)) - np.pi)
+        cost = angle_normalize(th) ** 2 + 0.1 * thdot ** 2 + 0.001 * action ** 2
+        return cost
+        

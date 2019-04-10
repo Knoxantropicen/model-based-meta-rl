@@ -23,7 +23,7 @@ def _compute_costs_per_thread(pid, queue, K, T, U, state_init, noise, dynamics, 
             action = torch.tensor(U[t] + noise[k, t, :])
             delta_state = dynamics(torch.cat((state, action), 0), new_dynamics_params)
             state += delta_state
-            costs[k] += task.env.get_cost(state)
+            costs[k] += task.env.get_cost(state, action)
     if queue is None:
         return [pid, costs]
     else:
@@ -68,7 +68,7 @@ class MPPI(Controller):
                 action = torch.tensor(self.U[t] + noise[k, t, :])
                 delta_state = dynamics(torch.cat((state, action), 0), new_dynamics_params)
                 state += delta_state
-                costs[k] += self.task.env.get_cost(state)
+                costs[k] += self.task.env.get_cost(state, action)
         return costs
 
     def _compute_costs_parallel(self, dynamics, state_init, noise, new_dynamics_params=None):
