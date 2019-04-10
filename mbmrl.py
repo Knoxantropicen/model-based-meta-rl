@@ -138,6 +138,7 @@ class MBMRL:
         self.lr_optimizer = torch.optim.Adam([self.phi], lr=self.eta)
 
         self.theta_loss = None
+        self.eval_rewards = []
         self._epoch_start_time = None
         self._n_task_steps_total = 0
         self._n_model_steps_total = 0
@@ -205,6 +206,8 @@ class MBMRL:
         self._time_total = gt.get_times().total + self._time_total_prev
 
         self.logger.record_tabular('Model Loss', np.float32(self.theta_loss.data))
+        for task, reward in zip(self.tasks, self.eval_rewards):
+            self.logger.record_tabular('Reward: ' + task.env.spec.id, reward)
         self.logger.record_tabular('Dataset Size', len(self.dataset))
         self.logger.record_tabular('Total Model Steps', self._n_model_steps_total)
         self.logger.record_tabular('Total Task Steps', self._n_task_steps_total)
@@ -374,9 +377,11 @@ class MBMRL:
 
     def evaluate(self):
         if self.num_threads > 1 and self.eval_sample_num > 1:
-            return self._evaluate_parallel()
+            mean_rewards = self._evaluate_parallel()
         else:
-            return self._evaluate_serial()
+            mean_rewards = self._evaluate_serial()
+        self.eval_rewards = mean_rewards
+        return mean_rewards
 
     def debug(self):
         for i in range(self.iteration_num):
