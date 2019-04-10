@@ -164,12 +164,16 @@ class MBMRL:
         return {
             'iteration': iter,
             'theta': self.theta.state_dict(),
+            'meta_optimizer': self.meta_optimizer.state_dict(),
+            'lr_optimizer': self.lr_optimizer.state_dict(),
             'phi': self.phi,
             'loss': self.theta_loss,
             }
     
     def _set_params(self, params):
         self.theta.load_state_dict(params['theta'])
+        self.meta_optimizer.load_state_dict(params['meta_optimizer'])
+        self.lr_optimizer.load_state_dict(params['lr_optimizer'])
         self.phi = params['phi']
         self.theta_loss = params['loss']
         return params['iteration']
