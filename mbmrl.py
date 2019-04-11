@@ -467,9 +467,7 @@ class MBMRL:
 
             if i % self.eval_frequency == 0:
                 self.logger.log('Evaluation')
-                mean_rewards = self.evaluate()
-                for task, mean_reward in zip(self.tasks, mean_rewards):
-                    self.logger.log(task.env.spec.id + ' Reward: ' + str(mean_reward))
+                self.evaluate()
             gt.stamp('eval')
 
             self._end_iteration(i)
