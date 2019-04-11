@@ -62,6 +62,7 @@ class Loss:
 
 class MSELoss(Loss):
     def __init__(self, loss_scale, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.loss_scale = loss_scale
 
     def get_loss(self, *args, **kwargs):
@@ -70,6 +71,7 @@ class MSELoss(Loss):
 
 class NLLLoss(Loss):
     def __init__(self, loss_scale, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.loss_scale = loss_scale
         self.std = torch.tensor(0.1, requires_grad=True)
         self.optimizer = torch.optim.Adam([self.std])
