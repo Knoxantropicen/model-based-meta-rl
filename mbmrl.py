@@ -12,7 +12,8 @@ mp.set_sharing_strategy('file_system')
 mp = mp.get_context('spawn')
 
 from net import Net
-from tools.utils import set_seed, zero_grad, loss_func
+from tools.utils import set_seed, zero_grad
+from loss import loss_func
 
 
 def _aggregate_rollout(rollout, state, action, next_state):
@@ -31,7 +32,7 @@ def _aggregate_rollout(rollout, state, action, next_state):
     return rollout
 
 def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, rollout_len, M,
-    phi, adaptation_update_num, loss_type, loss_scale, pred_std):
+    phi, adaptation_update_num, loss_func):
     '''
     per thread function of parallel trajectory collection
     see MBMRL._collect_traj_serial() for method description
@@ -52,26 +53,26 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
                 st, ac, next_st = past_traj
                 delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
                 pred_next_st = st + delta_st
-                loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
+                loss = loss_func.get_loss(pred_next_st, next_st) / len(st)
                 _n_model_steps_total += 1
                 d_theta = autograd.grad(loss, theta.parameters())
 
                 new_theta_dict = {key: val.clone() for key, val in theta.state_dict().items()}
                 new_theta_params = OrderedDict()
-                for (key, val), d in zip(theta.named_parameters(), d_theta):
-                    new_theta_params[key] = val - phi * d
+                for (key, val), d, ph in zip(theta.named_parameters(), d_theta, phi):
+                    new_theta_params[key] = val - ph * d
                     new_theta_dict[key] = new_theta_params[key]
                 
                 for _ in range(adaptation_update_num):
                     st, ac, next_st = past_traj
                     delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
                     pred_next_st = st + delta_st
-                    new_loss = loss_scale * loss_func(loss_type, pred_next_st, next_st, std=pred_std)
+                    new_loss = loss_func.get_loss(pred_next_st, next_st) / len(st)
                     _n_model_steps_total += 1
                     zero_grad(new_theta_params.values())
                     d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
-                    for (key, val), d in zip(theta.named_parameters(), d_theta):
-                        new_theta_params[key] = val - phi * d
+                    for (key, val), d, ph in zip(theta.named_parameters(), d_theta, phi):
+                        new_theta_params[key] = val - ph * d
                         new_theta_dict[key] = new_theta_params[key]
 
             action = controller.plan(theta, state, new_theta_dict)
@@ -119,7 +120,7 @@ class MBMRL:
     Original Paper: Nagabandi et al., 2019, 'Learning to Adapt in Dynamic, Real-World Environments through Meta-Reinforcement Learning'
     '''
     def __init__(self, tasks, model, controller, logger, seed, iteration_num, task_sample_num, task_sample_frequency, eval_frequency, eval_sample_num,
-            rollout_len, rollout_num, adaptation_update_num, M, K, beta, eta, phi, dataset_size, pred_std, loss_type, loss_scale, num_threads):
+            rollout_len, rollout_num, adaptation_update_num, M, K, beta, eta, phi, dataset_size, loss_type, loss_scale, num_threads):
         set_seed(seed)
         self.logger = logger
 
@@ -139,14 +140,12 @@ class MBMRL:
         self.K = K  # number of future datapoints
         self.beta = beta    # meta model learning rate
         self.eta = eta  # learning rate of update rule of adaptation (phi)
-        self.pred_std = pred_std    # std for use NLL loss (TODO: make it learnable)
-        self.loss_type = loss_type  # type of loss between real and predicted value of next state
-        self.loss_scale = loss_scale    # scaling factor of loss
+        self.loss_func = loss_func[loss_type](loss_scale=loss_scale)  # loss between real and predicted value of next state
         self.num_threads = num_threads  # number of threads for parallization
 
         self.theta = model  # dynamics neural network model
         self.meta_optimizer = torch.optim.Adam(self.theta.parameters(), lr=self.beta)   # optimizer for dynamics
-        self.phi = torch.tensor(phi, requires_grad=True)    # update rule of adaptation (a learning rate in GrBAL)
+        self.phi = torch.tensor([phi] * sum(p.numel() for p in self.theta.parameters()), requires_grad=True)    # update rule of adaptation (learning rate in GrBAL)
         self.lr_optimizer = torch.optim.Adam([self.phi], lr=self.eta)   # optimizer for update rule of adaptation
 
         self.theta_loss = None
@@ -168,6 +167,7 @@ class MBMRL:
             'lr_optimizer': self.lr_optimizer.state_dict(),
             'phi': self.phi,
             'loss': self.theta_loss,
+            'loss_func_optimizer': self.loss_func.state_dict(),
             }
     
     def _set_params(self, params):
@@ -176,6 +176,7 @@ class MBMRL:
         self.lr_optimizer.load_state_dict(params['lr_optimizer'])
         self.phi = params['phi']
         self.theta_loss = params['loss']
+        self.loss_func.load_state_dict(params['loss_func_optimizer'])
         return params['iteration']
         
     def _get_extra_data(self):
@@ -243,39 +244,49 @@ class MBMRL:
         state, action, next_state = traj
         delta_state = theta(torch.cat((state, action), 1), new_params=new_theta)
         pred_next_state = state + delta_state
-        loss = self.loss_scale / len(state) * loss_func(self.loss_type, pred_next_state, next_state, std=self.pred_std)
+        loss = self.loss_func.get_loss(pred_next_state, next_state) / len(state)
         self._n_model_steps_total += 1
         return loss
 
-    def _adaptation_update(self, theta, traj):
+    def _adaptation_update(self, theta, traj, loss_func_update=False):
         if traj == []:
             return None
 
         loss = self._compute_adaptation_loss(theta, traj)
-        d_theta = autograd.grad(loss, theta.parameters())
+        d_theta = autograd.grad(loss, theta.parameters(), retain_graph=True)
 
         new_theta_dict = {key: val.clone() for key, val in theta.state_dict().items()}
         new_theta_params = OrderedDict()
-        for (key, val), d in zip(theta.named_parameters(), d_theta):
-            new_theta_params[key] = val - self.phi * d
+        for (key, val), d, phi in zip(theta.named_parameters(), d_theta, self.phi):
+            new_theta_params[key] = val - phi * d
             new_theta_dict[key] = new_theta_params[key]
+        
+        if loss_func_update:
+            self.loss_func.update(loss)
         
         for _ in range(self.adaptation_update_num):
             new_loss = self._compute_adaptation_loss(theta, traj, new_theta_dict)
             zero_grad(new_theta_params.values())
-            d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
-            for (key, val), d in zip(theta.named_parameters(), d_theta):
-                new_theta_params[key] = val - self.phi * d
+            d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True, retain_graph=True)
+            for (key, val), d, phi in zip(theta.named_parameters(), d_theta, self.phi):
+                new_theta_params[key] = val - phi * d
                 new_theta_dict[key] = new_theta_params[key]
+
+            if loss_func_update:
+                self.loss_func.update(new_loss)
 
         return new_theta_dict
 
     def _meta_update(self, meta_loss):
         self.meta_optimizer.zero_grad()
         self.lr_optimizer.zero_grad()
+        self.loss_func.zero_grad()
+
         meta_loss.backward(retain_graph=True)
+
         self.meta_optimizer.step()
         self.lr_optimizer.step()
+        self.loss_func.step()
 
     def _collect_traj_parallel(self, task):
         workers = []
@@ -285,7 +296,7 @@ class MBMRL:
         for pid, rollout_num_per_thread in zip(range(self.num_threads), rollout_nums):
             if rollout_num_per_thread > 0:
                 worker_args = (pid, queue, task, self.controller, self.theta, rollout_num_per_thread, self.rollout_len, self.M,
-                    self.phi, self.adaptation_update_num, self.loss_type, self.loss_scale, self.pred_std)
+                    self.phi, self.adaptation_update_num, self.loss_func)
                 workers.append(mp.Process(target=_collect_traj_per_thread, args=worker_args))
         for worker in workers:
             worker.start()
@@ -408,7 +419,7 @@ class MBMRL:
             new_losses = []
             for _ in range(self.task_sample_num):
                 traj = self._sample_traj()
-                new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj])
+                new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj], True)
                 new_loss = self._compute_adaptation_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
                 new_losses.append(new_loss)
             self.theta_loss = torch.mean(torch.stack(new_losses))
@@ -442,7 +453,7 @@ class MBMRL:
                 # sample M+K steps from dataset
                 traj = self._sample_traj()
                 # do adaptation update, get new theta and gradients
-                new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj])
+                new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj], loss_func_update=True)
                 # compute loss using new theta
                 new_loss = self._compute_adaptation_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
                 new_losses.append(new_loss)
@@ -488,8 +499,8 @@ class MBMRL:
             reward_sum = 0
             state = task.reset()
             while not done:
-                past_traj = rollout[-self.M:]
-                new_theta_dict = self._adaptation_update(self.theta, past_traj)
+                past_traj = [r[-self.M:] for r in rollout]
+                new_theta_dict = self._adaptation_update(self.theta, past_traj, loss_func_update=True)
                 action = self.controller.plan(self.theta, state, new_theta_dict)
                 next_state, reward, done, _ = task.step(action)
                 reward_sum += reward
