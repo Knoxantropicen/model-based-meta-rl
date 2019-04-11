@@ -168,6 +168,7 @@ class MBMRL:
             'phi': self.phi,
             'loss': self.theta_loss,
             'loss_func_optimizer': self.loss_func.state_dict(),
+            'reward': self.eval_rewards,
             }
     
     def _set_params(self, params):
@@ -177,6 +178,7 @@ class MBMRL:
         self.phi = params['phi']
         self.theta_loss = params['loss']
         self.loss_func.load_state_dict(params['loss_func_optimizer'])
+        self.eval_rewards = params['reward']
         return params['iteration']
         
     def _get_extra_data(self):
