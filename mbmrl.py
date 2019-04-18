@@ -457,7 +457,7 @@ class MBMRL:
                 # do adaptation update, get new theta and gradients
                 new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj], loss_func_update=True)
                 # compute loss using new theta
-                new_loss = self._compute_adaptation_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
+                new_loss = self._compute_adaptation_loss(self.theta, [t[self.M:] for t in traj], new_theta_dict)
                 new_losses.append(new_loss)
             self.theta_loss = torch.mean(torch.stack(new_losses))
             gt.stamp('adaptation')
