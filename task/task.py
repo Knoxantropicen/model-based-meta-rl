@@ -33,12 +33,15 @@ class Task(gym.Env):
 class CartPoleTask(Task, CartPoleEnv):
     def get_cost(self, state, action):
         x, _, theta, _ = state
-        done = x < -self.x_threshold \
+        done = bool(x < -self.x_threshold \
                 or x > self.x_threshold \
                 or theta < -self.theta_threshold_radians \
-                or theta > self.theta_threshold_radians
-        cost = 0 if done else -1
-        return cost
+                or theta > self.theta_threshold_radians)
+        cost = 0.0 if done else -1.0
+        return cost, done
+
+    def get_reset_state(self):
+        return np.random.uniform(low=-0.05, high=0.05, size=(4,))
 
     def step(self, action, *args, **kwargs):
         action = self.reformat_action(action)

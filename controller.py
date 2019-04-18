@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 from tools.utils import get_space_shape
-
+from copy import deepcopy
 
 class Controller:
     '''
@@ -23,7 +23,10 @@ def _compute_costs_per_thread(pid, queue, K, T, U, state_init, noise, dynamics, 
             action = torch.tensor(U[t] + noise[k, t, :])
             delta_state = dynamics(torch.cat((state, action), 0), new_dynamics_params).detach()
             state += delta_state
-            costs[k] += task.env.get_cost(state, action)
+            cost, done = task.env.get_cost(state, action)
+            costs[k] += cost
+            if done:
+                state = torch.tensor(task.env.get_reset_state(), dtype=torch.float32)
     if queue is None:
         return [pid, costs]
     else:
@@ -68,7 +71,10 @@ class MPPI(Controller):
                 action = torch.tensor(self.U[t] + noise[k, t, :])
                 delta_state = dynamics(torch.cat((state, action), 0), new_dynamics_params).detach()
                 state += delta_state
-                costs[k] += self.task.env.get_cost(state, action)
+                cost, done = self.task.env.get_cost(state, action)
+                costs[k] += cost
+                if done:
+                    state = torch.tensor(self.task.env.get_reset_state(), dtype=torch.float32)
         return costs
 
     def _compute_costs_parallel(self, dynamics, state_init, noise, new_dynamics_params=None):
