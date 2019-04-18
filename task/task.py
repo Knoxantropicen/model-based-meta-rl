@@ -34,7 +34,7 @@ class CartPoleTask(Task, CartPoleEnv):
     def get_cost(self, state, action):
         x, _, theta, _ = state
         done = x < -self.x_threshold \
-                or x < self.x_threshold \
+                or x > self.x_threshold \
                 or theta < -self.theta_threshold_radians \
                 or theta > self.theta_threshold_radians
         cost = 0 if done else -1
