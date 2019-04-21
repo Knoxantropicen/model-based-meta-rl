@@ -4,4 +4,4 @@ A PyTorch implementation of paper [Learning to Adapt in Dynamic, Real-World Envi
 ## Todo List
 - Debug performance
 - Parameter tuning
-- More parallelization (DataLoader, CUDA, parallel env...)
+- More parallelization (async evaluation, parallel env...)

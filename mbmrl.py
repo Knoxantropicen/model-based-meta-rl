@@ -393,7 +393,7 @@ class MBMRL:
         for task in self.tasks:
             rewards = []
             self.controller.set_task(task)
-            for _ in range(5):
+            for _ in range(self.eval_sample_num):
                 state = task.reset()
                 done = False
                 reward_sum = 0
