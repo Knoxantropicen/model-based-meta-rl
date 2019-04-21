@@ -26,6 +26,8 @@ class Task(gym.Env):
             action = np.clip(action.round(), 0, 1).astype(self.action_space.dtype)
         elif isinstance(self.action_space, gsp.MultiDiscrete):
             action = np.clip(action.round(), 0, self.action_space.nvec - 1).astype(self.action_space.dtype)
+        elif self.action_space is None:
+            pass
         else:
             raise NotImplementedError
         return action
