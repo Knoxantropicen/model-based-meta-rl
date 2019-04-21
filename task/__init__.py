@@ -13,3 +13,10 @@ register(
     entry_point='task.task:PendulumTask',
     max_episode_steps=200,
 )
+
+register(
+    id='AntTask-v0',
+    entry_point='task.task:AntTask',
+    max_episode_steps=1000,
+    reward_threshold=6000.0,
+)
