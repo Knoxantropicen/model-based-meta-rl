@@ -31,7 +31,7 @@ def _aggregate_rollout(rollout, state, action, next_state):
             torch.cat((rollout[2], torch.tensor(next_state, dtype=torch.float).view(1, -1)))]
     return rollout
 
-def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, rollout_len, M,
+def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout_num, rollout_len, M,
     phi, adaptation_update_num, loss_func):
     '''
     per thread function of parallel trajectory collection
@@ -92,6 +92,7 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
         return rollouts, _n_model_steps_total, _n_task_steps_total
     else:
         queue.put([rollouts, _n_model_steps_total, _n_task_steps_total])
+        event.wait()
 
 def _evaluate_per_thread(queue, tasks, controller, theta):
     '''
@@ -295,12 +296,13 @@ class MBMRL:
 
     def _collect_traj_parallel(self, task):
         workers = []
+        event = mp.Event()
         queue = mp.Queue()
         rollout_nums = np.full(self.num_threads, self.rollout_num // self.num_threads, dtype=np.int)
         rollout_nums[:self.rollout_num % self.num_threads] += 1
         for pid, rollout_num_per_thread in zip(range(self.num_threads), rollout_nums):
             if rollout_num_per_thread > 0:
-                worker_args = (pid, queue, task, self.controller, self.theta, rollout_num_per_thread, self.rollout_len, self.M,
+                worker_args = (pid, event, queue, task, self.controller, self.theta, rollout_num_per_thread, self.rollout_len, self.M,
                     self.phi, self.adaptation_update_num, self.loss_func)
                 workers.append(mp.Process(target=_collect_traj_per_thread, args=worker_args))
         for worker in workers:
@@ -312,6 +314,7 @@ class MBMRL:
             rollouts.extend(rollouts_per_thread)
             self._n_model_steps_total += _n_model_steps_total
             self._n_task_steps_total += _n_task_steps_total
+        event.set()
         return rollouts
 
     def _collect_traj_serial(self, task):
