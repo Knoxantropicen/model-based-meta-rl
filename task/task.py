@@ -5,7 +5,7 @@ from gym.envs.classic_control import CartPoleEnv, PendulumEnv
 from gym.envs.mujoco import AntEnv
 
 class Task(gym.Env):
-    def get_cost(self, state, action):
+    def get_cost(self, state, action, next_state):
         '''
         return cost and done
         '''
@@ -43,8 +43,8 @@ class Task(gym.Env):
 
 # custom tasks
 class CartPoleTask(Task, CartPoleEnv):
-    def get_cost(self, state, action):
-        x, _, theta, _ = state
+    def get_cost(self, state, action, next_state):
+        x, _, theta, _ = next_state
         done = bool(x < -self.x_threshold \
                 or x > self.x_threshold \
                 or theta < -self.theta_threshold_radians \
@@ -63,8 +63,8 @@ class CartPoleTask(Task, CartPoleEnv):
         return np.float32(next_state), reward, done, info
 
 class PendulumTask(Task, PendulumEnv):
-    def get_cost(self, state, action):
-        costh, sinth, thdot = state
+    def get_cost(self, state, action, next_state):
+        costh, sinth, thdot = next_state
         costh, sinth = np.clip(costh, -1, 1), np.clip(sinth, -1, 1)
         def get_from_cos_sin(cosx, sinx):
             xc, xs = np.arccos(cosx), np.arcsin(sinx)
@@ -92,19 +92,14 @@ class AntTask(Task, AntEnv):
             np.clip(self.sim.data.cfrc_ext, -1, 1).flat,
         ])
 
-    def get_cost(self, state, action):
-        qpos, qvel = state[:self.model.nq], state[self.model.nq:self.model.nq + self.model.nv]
-        self.set_state(qpos, qvel)
-        xposbefore = self.get_body_com('torso')[0]
-        self.do_simulation(action, self.frame_skip)
-        xposafter = self.get_body_com('torso')[0]
+    def get_cost(self, state, action, next_state):
+        xposbefore, xposafter = state[0], next_state[0]
         forward_reward = (xposafter - xposbefore) / self.dt
         ctrl_cost = 0.5 * np.square(action).sum()
         contact_cost = 0.5 * 1e-3 * np.sum(np.square(np.clip(self.sim.data.cfrc_ext, -1, 1)))
         survive_reward = 1.0
         reward = forward_reward - ctrl_cost - contact_cost + survive_reward
-        new_state = self.state_vector()
-        notdone = np.isfinite(new_state).all() and new_state[2] >= 0.2 and new_state[2] <= 1.0
+        notdone = np.isfinite(next_state).all() and next_state[2] >= 0.2 and next_state[2] <= 1.0
         cost, done = -reward, not notdone
         return cost, done
         
