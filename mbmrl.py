@@ -12,7 +12,7 @@ mp.set_sharing_strategy('file_system')
 mp = mp.get_context('spawn')
 
 from net import Net
-from tools.utils import set_seed, zero_grad
+from tools.utils import set_seed, zero_grad, cuda, cuda_tensor
 from loss import loss_func
 
 
@@ -51,6 +51,7 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
             new_theta_dict = None
             if past_traj:
                 st, ac, next_st = past_traj
+                st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
                 delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
                 pred_next_st = st + delta_st
                 loss = loss_func.get_loss(pred_next_st, next_st) / len(st)
@@ -65,6 +66,7 @@ def _collect_traj_per_thread(pid, queue, task, controller, theta, rollout_num, r
                 
                 for _ in range(adaptation_update_num):
                     st, ac, next_st = past_traj
+                    st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
                     delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
                     pred_next_st = st + delta_st
                     new_loss = loss_func.get_loss(pred_next_st, next_st) / len(st)
@@ -143,9 +145,9 @@ class MBMRL:
         self.loss_func = loss_func[loss_type](loss_scale=loss_scale)  # loss between real and predicted value of next state
         self.num_threads = num_threads  # number of threads for parallization
 
-        self.theta = model  # dynamics neural network model
+        self.theta = cuda(model)  # dynamics neural network model
         self.meta_optimizer = torch.optim.Adam(self.theta.parameters(), lr=self.beta)   # optimizer for dynamics
-        self.phi = torch.tensor([phi] * sum(p.numel() for p in self.theta.parameters()), requires_grad=True)    # update rule of adaptation (learning rate in GrBAL)
+        self.phi = cuda_tensor(([phi] * sum(p.numel() for p in self.theta.parameters())), requires_grad=True)   # update rule of adaptation (learning rate in GrBAL)
         self.lr_optimizer = torch.optim.Adam([self.phi], lr=self.eta)   # optimizer for update rule of adaptation
 
         self.theta_loss = None
@@ -224,7 +226,7 @@ class MBMRL:
         iter_time = sample_time + adaptation_time + meta_time + eval_time
         self._time_total = gt.get_times().total + self._time_total_prev
 
-        self.logger.record_tabular('Model Loss', np.float32(self.theta_loss.data))
+        self.logger.record_tabular('Model Loss', np.float32(self.theta_loss.data.cpu()))
         for task, reward in zip(self.tasks, self.eval_rewards):
             self.logger.record_tabular('Reward: ' + task.env.spec.id, reward)
         self.logger.record_tabular('Dataset Size', len(self.dataset))
@@ -244,6 +246,7 @@ class MBMRL:
 
     def _compute_adaptation_loss(self, theta, traj, new_theta=None):
         state, action, next_state = traj
+        state, action, next_state = cuda(state), cuda(action), cuda(next_state)
         delta_state = theta(torch.cat((state, action), 1), new_params=new_theta)
         pred_next_state = state + delta_state
         loss = self.loss_func.get_loss(pred_next_state, next_state) / len(state)

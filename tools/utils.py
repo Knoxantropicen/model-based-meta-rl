@@ -6,6 +6,14 @@ import os
 import os.path as osp
 
 
+CUDA = torch.cuda.is_available()
+
+def cuda_tensor(data, *args, **kwargs):
+    return torch.tensor(data, device='cuda' if CUDA else 'cpu', *args, **kwargs)
+
+def cuda(tensor):
+    return tensor.cuda() if CUDA else tensor
+
 def set_seed(seed):
     seed = int(seed)
     np.random.seed(seed)
