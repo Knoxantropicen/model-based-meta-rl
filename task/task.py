@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 import gym
 import gym.spaces as gsp
 from gym.envs.classic_control import CartPoleEnv, PendulumEnv
@@ -7,13 +8,13 @@ from gym.envs.mujoco import AntEnv
 class Task(gym.Env):
     def get_cost(self, state, action, next_state):
         '''
-        return cost and done
+        return vectorized cost [n] and done [n, 1] (torch.tensor, dtype=float)
         '''
         raise NotImplementedError
 
-    def get_reset_state(self):
+    def get_reset_state(self, n):
         '''
-        return reset state
+        return vectorized reset state [n, dim_state] (torch.tensor, dtype=float)
         '''
         raise NotImplementedError
     
@@ -44,16 +45,17 @@ class Task(gym.Env):
 # custom tasks
 class CartPoleTask(Task, CartPoleEnv):
     def get_cost(self, state, action, next_state):
-        x, _, theta, _ = next_state
-        done = bool(x < -self.x_threshold \
-                or x > self.x_threshold \
-                or theta < -self.theta_threshold_radians \
-                or theta > self.theta_threshold_radians)
-        cost = 0.0 if done else -1.0
+        x, theta = next_state[:, 0], next_state[:, 2]
+        done = ((x < -self.x_threshold) \
+                | (x > self.x_threshold) \
+                | (theta < -self.theta_threshold_radians) \
+                | (theta > self.theta_threshold_radians)).float()
+        cost = done - 1.0
+        done = done.unsqueeze(1)
         return cost, done
 
-    def get_reset_state(self):
-        return self.np_random.uniform(low=-0.05, high=0.05, size=(4,))
+    def get_reset_state(self, n):
+        return torch.FloatTensor(n, 4).uniform_(-0.05, 0.05)
 
     def step(self, action, *args, **kwargs):
         action = self.reformat_action(action)
@@ -64,24 +66,23 @@ class CartPoleTask(Task, CartPoleEnv):
 
 class PendulumTask(Task, PendulumEnv):
     def get_cost(self, state, action, next_state):
-        costh, sinth, thdot = next_state
-        costh, sinth = np.clip(costh, -1, 1), np.clip(sinth, -1, 1)
+        costh, sinth, thdot = next_state[:, 0], next_state[:, 1], next_state[:, 2]
+        costh, sinth = torch.clamp(costh, -1, 1), torch.clamp(sinth, -1, 1)
         def get_from_cos_sin(cosx, sinx):
-            xc, xs = np.arccos(cosx), np.arcsin(sinx)
-            return xc if xs > 0 or (xs == 0 and xc < 0.5 * np.pi) else -xc
+            xc, xs = torch.acos(cosx), torch.asin(sinx)
+            return xc * 2 * (((xs > 0) | ((xs == 0) & (xc < 0.5 * np.pi))).float() - 0.5)
         th = get_from_cos_sin(costh, sinth)
-        action = np.clip(action, -self.max_torque, self.max_torque)[0]
+        action = torch.clamp(action[:, 0], -self.max_torque, self.max_torque)
         def angle_normalize(x):
             return (((x + np.pi) % (2 * np.pi)) - np.pi)
         cost = angle_normalize(th) ** 2 + 0.1 * thdot ** 2 + 0.001 * action ** 2
-        done = False
+        done = torch.zeros_like(cost).unsqueeze(1)
         return cost, done
 
-    def get_reset_state(self):
-        high = np.array([np.pi, 1])
-        state = self.np_random.uniform(low=-high, high=high)
-        theta, thetadot = state
-        return np.array([np.cos(theta), np.sin(theta), thetadot])
+    def get_reset_state(self, n):
+        theta = torch.FloatTensor(n, 1).uniform_(-np.pi, np.pi)
+        thetadot = torch.FloatTensor(n, 1).uniform_(-1.0, 1.0)
+        return torch.cat((torch.cos(theta), torch.sin(theta), thetadot), -1)
 
 # mujoco
 class AntTask(Task, AntEnv):
@@ -89,22 +90,20 @@ class AntTask(Task, AntEnv):
         return np.concatenate([
             self.sim.data.qpos.flat,
             self.sim.data.qvel.flat,
-            np.clip(self.sim.data.cfrc_ext, -1, 1).flat,
         ])
 
     def get_cost(self, state, action, next_state):
-        xposbefore, xposafter = state[0], next_state[0]
-        forward_reward = (xposafter - xposbefore) / self.dt
-        ctrl_cost = 0.5 * np.square(action).sum()
-        contact_cost = 0.5 * 1e-3 * np.sum(np.square(np.clip(self.sim.data.cfrc_ext, -1, 1)))
+        xposbefore, xposafter = state[:, 0], next_state[:, 0]
+        cfrc_ext = next_state[:, self.model.nq + self.model.nv:]
+        forward_reward = ((xposafter - xposbefore) / self.dt)
+        ctrl_cost = 0.5 * torch.pow(action, 2).sum(dim=1)
         survive_reward = 1.0
-        reward = forward_reward - ctrl_cost - contact_cost + survive_reward
-        notdone = np.isfinite(next_state).all() and next_state[2] >= 0.2 and next_state[2] <= 1.0
-        cost, done = -reward, not notdone
+        reward = forward_reward - ctrl_cost + survive_reward
+        notdone = torch.isfinite(next_state).all(dim=1) & (next_state[:, 2] >= 0.2) & (next_state[:, 2] <= 1.0)
+        cost, done = -reward, (~notdone).float().unsqueeze(1)
         return cost, done
         
-    def get_reset_state(self):
-        qpos = self.init_qpos + self.np_random.uniform(size=self.model.nq, low=-0.1, high=0.1)
-        qvel = self.init_qvel + self.np_random.randn(self.model.nv) * 0.1
-        self.set_state(qpos, qvel)
-        return self._get_obs()
+    def get_reset_state(self, n):
+        qpos = torch.tensor(self.init_qpos, dtype=torch.float) + torch.FloatTensor(n, self.model.nq).uniform_(-0.1, 0.1)
+        qvel = torch.tensor(self.init_qvel, dtype=torch.float) + torch.randn(n, self.model.nv) * 0.1
+        return torch.cat((qpos, qvel), -1)
