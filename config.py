@@ -36,7 +36,6 @@ train_cfg = {
 test_cfg = {
         'seed': 0,
         'iteration_num': 2e3,
-        'render': False,
         }
 
 net_cfg = {

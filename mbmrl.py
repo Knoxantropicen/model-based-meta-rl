@@ -42,6 +42,8 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
     controller.set_task(task)
     _n_model_steps_total = 0
     _n_task_steps_total = 0
+    # TODO: try multi-gpu
+    gpu_id = pid % 1
 
     for _ in range(rollout_num):
         rollout = []
@@ -51,7 +53,7 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
             new_theta_dict = None
             if past_traj:
                 st, ac, next_st = past_traj
-                st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
+                st, ac, next_st = cuda(st, gpu_id), cuda(ac, gpu_id), cuda(next_st, gpu_id)
                 delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
                 pred_next_st = st + delta_st
                 loss = loss_func.get_loss(pred_next_st, next_st) / len(st)
@@ -66,7 +68,7 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
                 
                 for _ in range(adaptation_update_num):
                     st, ac, next_st = past_traj
-                    st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
+                    st, ac, next_st = cuda(st, gpu_id), cuda(ac, gpu_id), cuda(next_st, gpu_id)
                     delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
                     pred_next_st = st + delta_st
                     new_loss = loss_func.get_loss(pred_next_st, next_st) / len(st)

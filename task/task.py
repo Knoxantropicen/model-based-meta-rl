@@ -43,6 +43,7 @@ class Task(gym.Env):
         return np.float32(state)
 
 # custom tasks
+
 class CartPoleTask(Task, CartPoleEnv):
     def get_cost(self, state, action, next_state):
         x, theta = next_state[:, 0], next_state[:, 2]
@@ -64,27 +65,7 @@ class CartPoleTask(Task, CartPoleEnv):
             reward = 0
         return np.float32(next_state), reward, done, info
 
-class PendulumTask(Task, PendulumEnv):
-    def get_cost(self, state, action, next_state):
-        costh, sinth, thdot = next_state[:, 0], next_state[:, 1], next_state[:, 2]
-        costh, sinth = torch.clamp(costh, -1, 1), torch.clamp(sinth, -1, 1)
-        def get_from_cos_sin(cosx, sinx):
-            xc, xs = torch.acos(cosx), torch.asin(sinx)
-            return xc * 2 * (((xs > 0) | ((xs == 0) & (xc < 0.5 * np.pi))).float() - 0.5)
-        th = get_from_cos_sin(costh, sinth)
-        action = torch.clamp(action[:, 0], -self.max_torque, self.max_torque)
-        def angle_normalize(x):
-            return (((x + np.pi) % (2 * np.pi)) - np.pi)
-        cost = angle_normalize(th) ** 2 + 0.1 * thdot ** 2 + 0.001 * action ** 2
-        done = torch.zeros_like(cost).unsqueeze(1)
-        return cost, done
 
-    def get_reset_state(self, n):
-        theta = torch.FloatTensor(n, 1).uniform_(-np.pi, np.pi)
-        thetadot = torch.FloatTensor(n, 1).uniform_(-1.0, 1.0)
-        return torch.cat((torch.cos(theta), torch.sin(theta), thetadot), -1)
-
-# mujoco
 class AntTask(Task, AntEnv):
     def _get_obs(self):
         return np.concatenate([
@@ -94,7 +75,7 @@ class AntTask(Task, AntEnv):
 
     def get_cost(self, state, action, next_state):
         xposbefore, xposafter = state[:, 0], next_state[:, 0]
-        cfrc_ext = next_state[:, self.model.nq + self.model.nv:]
+        xposafter = np.clip(xposafter, xposbefore - 10.0, xposbefore + 10.0)
         forward_reward = ((xposafter - xposbefore) / self.dt)
         ctrl_cost = 0.5 * torch.pow(action, 2).sum(dim=1)
         survive_reward = 1.0
@@ -107,3 +88,9 @@ class AntTask(Task, AntEnv):
         qpos = torch.tensor(self.init_qpos, dtype=torch.float) + torch.FloatTensor(n, self.model.nq).uniform_(-0.1, 0.1)
         qvel = torch.tensor(self.init_qvel, dtype=torch.float) + torch.randn(n, self.model.nv) * 0.1
         return torch.cat((qpos, qvel), -1)
+
+    def step(self, action, *args, **kwargs):
+        action = self.reformat_action(action)
+        if self.action_space: action = np.clip(action, self.action_space.low, self.action_space.high)
+        next_state, reward, done, info = super().step(action, *args, **kwargs)
+        return np.float32(next_state), reward, done, info

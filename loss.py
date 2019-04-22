@@ -66,7 +66,7 @@ class MSELoss(Loss):
         self.loss_scale = loss_scale
 
     def get_loss(self, *args, **kwargs):
-        return self.loss_scale * torch.sum(torch.pow(args[0] - args[1], 2))
+        return self.loss_scale * torch.sqrt(torch.sum(torch.pow(args[0] - args[1], 2)))
 
 
 class NLLLoss(Loss):

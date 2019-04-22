@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--snapshot-mode', type=str, default='last')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--iter', type=int, default=None)
+    parser.add_argument('--render', default=False, action='store_true')
     args = parser.parse_args()
 
     train_log_dir = create_log_dir(first_time=False, exp_prefix=args.exp_name, seed=args.train_seed)
@@ -41,7 +42,7 @@ def main():
     controller = MPPI(**cfgs['controller'])
 
     algo = MBMRL(None, model, controller, logger, num_threads=1, **cfgs['train'])
-    algo.test(test_task, load_iter=args.iter, **cfgs['test'])
+    algo.test(test_task, load_iter=args.iter, render=args.render, **cfgs['test'])
 
 
 if __name__ == '__main__':

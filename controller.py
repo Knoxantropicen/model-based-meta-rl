@@ -20,7 +20,8 @@ def _compute_costs_per_thread(pid, queue, K, T, U, state_init, noise, dynamics, 
     state = torch.stack(([torch.tensor(state_init, dtype=torch.float32)] * K))
     for t in range(T):
         action = torch.stack(([torch.tensor(U[t] + noise[k, t, :]) for k in range(K)]))
-        delta_state = dynamics(cuda(torch.cat((state, action), -1)), new_dynamics_params).detach()
+        gpu_id = next(dynamics.parameters()).device
+        delta_state = dynamics(cuda(torch.cat((state, action), -1), gpu_id), new_dynamics_params).detach()
         next_state = state + delta_state.cpu()
         cost, done = task.env.get_cost(state, action, next_state)
         state = next_state
@@ -68,7 +69,8 @@ class MPPI(Controller):
         state = torch.stack(([torch.tensor(state_init, dtype=torch.float32)] * self.K))
         for t in range(self.T):
             action = torch.stack(([torch.tensor(self.U[t] + noise[k, t, :]) for k in range(self.K)]))
-            delta_state = dynamics(cuda(torch.cat((state, action), -1)), new_dynamics_params).detach()
+            gpu_id = next(dynamics.parameters()).device
+            delta_state = dynamics(cuda(torch.cat((state, action), -1), gpu_id), new_dynamics_params).detach()
             next_state = state + delta_state.cpu()
             cost, done = self.task.env.get_cost(state, action, next_state)
             state = next_state
