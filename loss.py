@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch.distributions.normal import Normal
+from tools.utils import cuda_tensor
 
 
 def adam_update(p, loss, optimizer):
@@ -73,7 +74,7 @@ class NLLLoss(Loss):
     def __init__(self, loss_scale, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.loss_scale = loss_scale
-        self.std = torch.tensor(0.1, requires_grad=True)
+        self.std = cuda_tensor(0.1, requires_grad=True)
         self.optimizer = torch.optim.Adam([self.std])
 
     def get_loss(self, *args, **kwargs):
