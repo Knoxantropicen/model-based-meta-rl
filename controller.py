@@ -21,6 +21,7 @@ def _compute_costs_per_thread(pid, queue, K, T, U, state_init, noise, dynamics, 
     for t in range(T):
         action = torch.stack(([torch.tensor(U[t] + noise[k, t, :]) for k in range(K)]))
         gpu_id = next(dynamics.parameters()).device
+        print(gpu_id)
         delta_state = dynamics(cuda(torch.cat((state, action), -1), gpu_id), new_dynamics_params).detach()
         next_state = state + delta_state.cpu()
         cost, done = task.env.get_cost(state, action, next_state)
@@ -58,8 +59,8 @@ class MPPI(Controller):
     def __init__(self, T, K, U=None, u=None, noise_mu=0.0, noise_sigma=1.0, lamda=1.0, num_threads=1):
         self.task = None
 
-        self.T = T # number of timesteps
-        self.K = K # number of samples
+        self.T = int(T) # number of timesteps
+        self.K = int(K) # number of samples
         self.U = U # initial control sequence
         self.U_init = U
         self.u_init = u
@@ -72,7 +73,7 @@ class MPPI(Controller):
         self.num_threads = num_threads
 
     def set_task(self, task):
-        self.task = task
+        self.task = deepcopy(task)
         if self.U_init is None:
             self.U = np.zeros((self.T, get_space_shape(self.task.action_space)))
             for t in range(self.T):
@@ -105,7 +106,7 @@ class MPPI(Controller):
         workers = []
         queue = mp.Queue()
         # distribute K to all threads
-        Ks = np.full(self.num_threads, self.K // self.num_threads)
+        Ks = np.full(self.num_threads, self.K // self.num_threads, dtype=np.int)
         Ks[:self.K % self.num_threads] += 1
         for pid, K in zip(range(self.num_threads), Ks):
             if K > 0:
@@ -141,13 +142,14 @@ class MPPI(Controller):
                 costs[k] -= reward
                 if done:
                     self.task.reset()
+        self.task.env.set_state(state_init)
         return costs
 
     def _compute_real_costs_parallel(self, state_init, noise):
         workers = []
         queue = mp.Queue()
         # distribute K to all threads
-        Ks = np.full(self.num_threads, self.K // self.num_threads)
+        Ks = np.full(self.num_threads, self.K // self.num_threads, dtype=np.int)
         Ks[:self.K % self.num_threads] += 1
         for pid, K in zip(range(self.num_threads), Ks):
             if K > 0:
