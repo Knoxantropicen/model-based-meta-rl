@@ -189,3 +189,13 @@ class MPPI(Controller):
         self.U[-1] = self.u_init if self.u_init else self.task.action_space.sample()
         return action
 
+class MPC(MPPI):
+    def plan(self, dynamics, state, new_dynamics_params=None, debug=False):
+        noise = self._sample_noise()
+        if debug:
+            costs = self._compute_real_costs(state, noise)
+        else:
+            costs = self._compute_costs(dynamics, state, noise, new_dynamics_params)
+        best_k = np.argmin(costs)
+        action = self.U[0] + noise[best_k, 0, :]
+        return action
