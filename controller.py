@@ -21,7 +21,6 @@ def _compute_costs_per_thread(pid, queue, K, T, U, state_init, noise, dynamics, 
     for t in range(T):
         action = torch.stack(([torch.tensor(U[t] + noise[k, t, :]) for k in range(K)]))
         gpu_id = next(dynamics.parameters()).device
-        print(gpu_id)
         delta_state = dynamics(cuda(torch.cat((state, action), -1), gpu_id), new_dynamics_params).detach()
         next_state = state + delta_state.cpu()
         cost, done = task.env.get_cost(state, action, next_state)
