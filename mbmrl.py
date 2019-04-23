@@ -482,7 +482,7 @@ class MBMRL:
 
             self._end_iteration(i)
 
-    def test(self, task, seed, iteration_num, render, load_iter=None):
+    def test(self, task, seed, iteration_num, render, load_iter=None, debug=False):
         set_seed(seed)
         iteration_num = int(iteration_num)
 
@@ -509,7 +509,7 @@ class MBMRL:
             while not done:
                 past_traj = [r[-self.M:] for r in rollout]
                 new_theta_dict = self._adaptation_update(self.theta, past_traj, loss_func_update=True)
-                action = self.controller.plan(self.theta, state, new_theta_dict)
+                action = self.controller.plan(self.theta, state, new_theta_dict, debug)
                 next_state, reward, done, _ = task.step(action)
                 reward_sum += reward
                 if new_theta_dict is not None:

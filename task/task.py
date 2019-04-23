@@ -58,8 +58,11 @@ class CartPoleTask(Task, CartPoleEnv):
     def get_reset_state(self, n):
         return torch.FloatTensor(n, 4).uniform_(-0.05, 0.05)
 
+    def set_state(self, state):
+        self.state = state
+
     def step(self, action, *args, **kwargs):
-        action = self.reformat_action(action)
+        action = self.reformat_action(*action)
         next_state, reward, done, info = super().step(action, *args, **kwargs)
         if done:
             reward = 0
@@ -88,6 +91,9 @@ class AntTask(Task, AntEnv):
         qpos = torch.tensor(self.init_qpos, dtype=torch.float) + torch.FloatTensor(n, self.model.nq).uniform_(-0.1, 0.1)
         qvel = torch.tensor(self.init_qvel, dtype=torch.float) + torch.randn(n, self.model.nv) * 0.1
         return torch.cat((qpos, qvel), -1)
+
+    def set_state(self, state):
+        self.set_state(state[:self.model.nq], state[self.model.nq:self.model.nq + self.model.nv])
 
     def step(self, action, *args, **kwargs):
         action = self.reformat_action(action)

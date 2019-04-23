@@ -33,18 +33,36 @@ def _compute_costs_per_thread(pid, queue, K, T, U, state_init, noise, dynamics, 
     else:
         queue.put([pid, costs])
 
+def _compute_real_costs_per_thread(pid, queue, K, T, U, state_init, noise, task):
+    costs = np.zeros(K)
+    for k in range(K):
+        task.reset()
+        task.env.set_state(state_init)
+        for t in range(T):
+            action = U[t] + noise[k, t, :]
+            _, reward, done, _ = task.step(action)
+            costs[k] -= reward
+            if done:
+                task.reset()
+    if queue is None:
+        return [pid, costs]
+    else:
+        queue.put([pid, costs])
+
 
 class MPPI(Controller):
     '''
     Model Predictive Path Integral Controller
     Original Paper: Williams et al., 2017, 'Information Theoretic MPC for Model-Based Reinforcement Learning'
     '''
-    def __init__(self, T, K, U=None, noise_mu=0.0, noise_sigma=1.0, lamda=1.0, num_threads=1):
+    def __init__(self, T, K, U=None, u=None, noise_mu=0.0, noise_sigma=1.0, lamda=1.0, num_threads=1):
         self.task = None
 
         self.T = T # number of timesteps
         self.K = K # number of samples
         self.U = U # initial control sequence
+        self.U_init = U
+        self.u_init = u
 
         # control hyper parameters
         self.noise_mu = noise_mu
@@ -55,8 +73,12 @@ class MPPI(Controller):
 
     def set_task(self, task):
         self.task = task
-        if self.U is None:
-            self.U = [self.task.action_space.sample()] * self.T
+        if self.U_init is None:
+            self.U = np.zeros((self.T, get_space_shape(self.task.action_space)))
+            for t in range(self.T):
+                self.U[t] = self.task.action_space.sample()
+        else:
+            self.U = self.U_init
         self.U = np.float32(self.U)
 
     def _sample_noise(self):
@@ -107,6 +129,45 @@ class MPPI(Controller):
             return self._compute_costs_parallel(*args, **kwargs)
         else:
             return self._compute_costs_serial(*args, **kwargs)
+
+    def _compute_real_costs_serial(self, state_init, noise):
+        costs = np.zeros(self.K)
+        for k in range(self.K):
+            self.task.reset()
+            self.task.env.set_state(state_init)
+            for t in range(self.T):
+                action = self.U[t] + noise[k, t, :]
+                _, reward, done, _ = self.task.step(action)
+                costs[k] -= reward
+                if done:
+                    self.task.reset()
+        return costs
+
+    def _compute_real_costs_parallel(self, state_init, noise):
+        workers = []
+        queue = mp.Queue()
+        # distribute K to all threads
+        Ks = np.full(self.num_threads, self.K // self.num_threads)
+        Ks[:self.K % self.num_threads] += 1
+        for pid, K in zip(range(self.num_threads), Ks):
+            if K > 0:
+                worker_args = (pid, queue, K, self.T, self.U, state_init, noise, self.task)
+                workers.append(mp.Process(target=_compute_real_costs_per_thread, args=worker_args))
+        for worker in workers:
+            worker.start()
+
+        all_costs = [None] * len(workers)
+        for _ in workers:
+            pid, costs = queue.get()
+            all_costs[pid] = costs
+        all_costs = np.concatenate(all_costs)
+        return all_costs
+
+    def _compute_real_costs(self, *args, **kwargs):
+        if self.num_threads > 1:
+            return self._compute_real_costs_parallel(*args, **kwargs)
+        else:
+            return self._compute_real_costs_serial(*args, **kwargs)
         
     def _compute_importance_weights(self, costs):
         beta = np.min(costs)
@@ -114,10 +175,16 @@ class MPPI(Controller):
         weights /= np.sum(weights)
         return weights
 
-    def plan(self, dynamics, state, new_dynamics_params=None):
+    def plan(self, dynamics, state, new_dynamics_params=None, debug=False):
         noise = self._sample_noise()
-        costs = self._compute_costs(dynamics, state, noise, new_dynamics_params)
+        if debug:
+            costs = self._compute_real_costs(state, noise)
+        else:
+            costs = self._compute_costs(dynamics, state, noise, new_dynamics_params)
         weights = self._compute_importance_weights(costs)
-        action = self.U[0] + np.sum(weights * noise[:, 0, :].T)
+        self.U += np.sum(weights * noise.T, axis=-1).T
+        action = self.U[0]
+        self.U[:-1] = self.U[1:]
+        self.U[-1] = self.u_init if self.u_init else self.task.action_space.sample()
         return action
 
