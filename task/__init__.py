@@ -14,3 +14,11 @@ register(
     max_episode_steps=100,
     reward_threshold=6000.0,
 )
+
+
+register(
+    id='HalfCheetahTask-v0',
+    entry_point='task.task:HalfCheetahTask',
+    max_episode_steps=100,
+    reward_threshold=4800.0,
+)
