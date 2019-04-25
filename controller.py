@@ -37,7 +37,7 @@ def _compute_real_costs_per_thread(pid, queue, K, T, U, state_init, noise, task)
     costs = np.zeros(K)
     for k in range(K):
         task.reset()
-        task.env.set_state(state_init)
+        task.env.set_new_state(state_init)
         for t in range(T):
             action = U[t] + noise[k, t, :]
             _, reward, done, _ = task.step(action)
@@ -134,14 +134,14 @@ class MPPI(Controller):
         costs = np.zeros(self.K)
         for k in range(self.K):
             self.task.reset()
-            self.task.env.set_state(state_init)
+            self.task.env.set_new_state(state_init)
             for t in range(self.T):
                 action = self.U[t] + noise[k, t, :]
                 _, reward, done, _ = self.task.step(action)
                 costs[k] -= reward
                 if done:
                     self.task.reset()
-        self.task.env.set_state(state_init)
+        self.task.env.set_new_state(state_init)
         return costs
 
     def _compute_real_costs_parallel(self, state_init, noise):
