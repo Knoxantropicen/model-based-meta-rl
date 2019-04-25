@@ -7,11 +7,12 @@ import os.path as osp
 
 
 CUDA = torch.cuda.is_available()
+DEFAULT_GPU_ID = 0
 
-def cuda_tensor(data, *args, **kwargs):
-    return torch.tensor(data, device='cuda' if CUDA else 'cpu', *args, **kwargs)
+def cuda_tensor(data, *args, gpu_id=DEFAULT_GPU_ID, **kwargs):
+    return torch.tensor(data, device='cuda:' + str(gpu_id) if CUDA else 'cpu', *args, **kwargs)
 
-def cuda(tensor, gpu_id=0):
+def cuda(tensor, gpu_id=DEFAULT_GPU_ID):
     return tensor.cuda(device=gpu_id) if CUDA else tensor
 
 def set_seed(seed):
