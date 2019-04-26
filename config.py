@@ -10,6 +10,7 @@ train_cfg = {
         'iteration_num': 1e3,
         'task_sample_num': 32,
         'task_sample_frequency': 10,
+        'traj_sample_num': 100,
         'eval_frequency': 10,
         'eval_sample_num': 1,
         # adaptation
@@ -45,6 +46,6 @@ controller_cfg = {
         'K': 1000, # sample num
         'T': 15, # horizon
         'noise_mu': 0.0,
-        'noise_sigma': 10.0,
+        'noise_sigma': 0.5,
         'lamda': 1.0,
         }

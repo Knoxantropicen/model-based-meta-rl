@@ -15,6 +15,12 @@ def cuda_tensor(data, *args, gpu_id=DEFAULT_GPU_ID, **kwargs):
 def cuda(tensor, gpu_id=DEFAULT_GPU_ID):
     return tensor.cuda(device=gpu_id) if CUDA else tensor
 
+env_dict = {
+    'cartpole': 'CartPoleTask-v0',
+    'ant': 'AntTask-v0',
+    'halfcheetah': 'HalfCheetahTask-v0',
+}
+
 def set_seed(seed):
     seed = int(seed)
     np.random.seed(seed)

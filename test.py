@@ -6,7 +6,7 @@ from mbmrl import MBMRL
 from controller import MPPI, MPC
 from net import Net
 from config import test_cfg, controller_cfg, net_cfg
-from tools.utils import check_task, load_cfgs
+from tools.utils import check_task, load_cfgs, env_dict
 from tools.logger import setup_logger, create_log_dir
 
 cfgs = {
@@ -42,8 +42,8 @@ def main():
     logger = setup_logger(first_time=False, exp_prefix=args.exp_name, seed=args.train_seed,
         cfgs=cfgs, snapshot_mode=args.snapshot_mode, snapshot_gap=None)
 
-    test_task = gym.make(cfgs['test_task'])
-    sample_train_task = gym.make(cfgs['train_tasks'][0])
+    test_task = gym.make(env_dict[cfgs['test_task']])
+    sample_train_task = gym.make(env_dict[cfgs['train_tasks'][0]])
     # check if test task has same dimensions of observation and action as training tasks
     ob_shape, ac_shape = check_task([test_task, sample_train_task])
     del sample_train_task

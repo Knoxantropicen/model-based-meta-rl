@@ -6,7 +6,7 @@ from mbmrl import MBMRL
 from controller import MPPI, MPC
 from net import Net
 from config import train_cfg, controller_cfg, net_cfg
-from tools.utils import check_task, load_cfgs
+from tools.utils import check_task, load_cfgs, env_dict
 from tools.logger import setup_logger
 
 cfgs = {
@@ -43,7 +43,7 @@ def main():
     if args.resume:
         cfgs = load_cfgs(logger.get_log_dir())
     
-    train_tasks = [gym.make(t) for t in cfgs['train_tasks']]
+    train_tasks = [gym.make(env_dict[t]) for t in cfgs['train_tasks']]
 
     # get shape of task space
     ob_shape, ac_shape = check_task(train_tasks)

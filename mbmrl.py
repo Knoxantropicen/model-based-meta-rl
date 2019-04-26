@@ -123,7 +123,7 @@ class MBMRL:
     Original Paper: Nagabandi et al., 2019, 'Learning to Adapt in Dynamic, Real-World Environments through Meta-Reinforcement Learning'
     '''
     def __init__(self, tasks, model, controller, logger, seed, iteration_num, task_sample_num, task_sample_frequency, eval_frequency, eval_sample_num,
-            rollout_len, rollout_num, adaptation_update_num, M, K, beta, eta, phi, dataset_size, loss_type, loss_scale, num_threads):
+            rollout_len, rollout_num, adaptation_update_num, traj_sample_num, M, K, beta, eta, phi, dataset_size, loss_type, loss_scale, num_threads):
         set_seed(seed)
         self.logger = logger
 
@@ -139,6 +139,7 @@ class MBMRL:
         self.rollout_len = int(rollout_len) # max length of rollout in trajectory collection, i.e., number of (s, a, s') transition in a single rollout
         self.rollout_num = int(rollout_num) # number of rollouts for once trajectory collection
         self.adaptation_update_num = int(adaptation_update_num) # number of updates per adaptation
+        self.traj_sample_num = int(traj_sample_num) # number of trajectories sampled per adaptation
         self.M = M  # number of previous datapoints
         self.K = K  # number of future datapoints
         self.beta = beta    # meta model learning rate
@@ -347,20 +348,25 @@ class MBMRL:
         else:
             return self._collect_traj_serial(task)
 
-    def _sample_traj(self, num=1):
-        trajs = []
-        for _ in range(num):
+    def _sample_traj(self):
+        m_trajs, k_trajs = [], []
+        for _ in range(self.traj_sample_num):
             rollout = self.dataset[np.random.choice(len(self.dataset))]
-            start_idx = np.random.choice(len(rollout[0]) + 1 - self.M - self.K)
-            end_idx = start_idx + self.M + self.K
-            traj = [r[start_idx: end_idx] for r in rollout]
-            if trajs == []:
-                trajs = traj
+            m_start_idx = np.random.choice(len(rollout[0]) + 1 - self.M - self.K)
+            m_end_idx = m_start_idx + self.M
+            k_start_idx = m_end_idx
+            k_end_idx = k_start_idx + self.K
+            m_traj = [r[m_start_idx: m_end_idx] for r in rollout]
+            k_traj = [r[k_start_idx: k_end_idx] for r in rollout]
+            if m_trajs == []:
+                m_trajs = m_traj
             else:
-                trajs = [torch.cat((trajs[0], traj[0])),
-                    torch.cat((trajs[1], traj[1])),
-                    torch.cat((trajs[2], traj[2]))]
-        return trajs
+                m_trajs = [torch.cat((m_trajs[dim], m_traj[dim])) for dim in range(3)]
+            if k_trajs == []:
+                k_trajs = k_traj
+            else:
+                k_trajs = [torch.cat((k_trajs[dim], k_traj[dim])) for dim in range(3)]
+        return m_trajs, k_trajs
 
     def _sample_task(self):
         # TODO: support task distribution
@@ -417,27 +423,6 @@ class MBMRL:
         self.eval_rewards = mean_rewards
         return mean_rewards
 
-    def debug(self):
-        for i in range(self.iteration_num):
-            print('Iteration ' + str(i))
-            if i % self.task_sample_frequency == 0:
-                task = self._sample_task()
-                rollouts = self._collect_traj(task)
-                self.dataset.extend(rollouts)
-                np.random.shuffle(self.dataset)
-            new_losses = []
-            for _ in range(self.task_sample_num):
-                traj = self._sample_traj()
-                new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj], True)
-                new_loss = self._compute_adaptation_loss(self.theta, [t[:self.M] for t in traj], new_theta_dict)
-                new_losses.append(new_loss)
-            self.theta_loss = torch.mean(torch.stack(new_losses))
-            self._meta_update(self.theta_loss)
-            if i % self.eval_frequency == 0:
-                mean_rewards = self.evaluate()
-                for task, mean_reward in zip(self.tasks, mean_rewards):
-                    print(task.env.spec.id + ' Reward: ' + str(mean_reward))
-
     def train(self, resume=False, load_iter=None):
         gt.reset()
         gt.set_def_unique(False)
@@ -453,18 +438,18 @@ class MBMRL:
                 rollouts = self._collect_traj(task)
                 self._n_rollouts_total += 1
                 self.dataset.extend(rollouts)
-                np.random.shuffle(self.dataset)
+                # np.random.shuffle(self.dataset)
             gt.stamp('sample')
 
             self.logger.log('Adaptation Update')
             new_losses = []
-            for j in range(self.task_sample_num):
+            for _ in range(self.task_sample_num):
                 # sample M+K steps from dataset
-                traj = self._sample_traj()
+                m_trajs, k_trajs = self._sample_traj()
                 # do adaptation update, get new theta and gradients
-                new_theta_dict = self._adaptation_update(self.theta, [t[:self.M] for t in traj], loss_func_update=True)
+                new_theta_dict = self._adaptation_update(self.theta, m_trajs, loss_func_update=True)
                 # compute loss using new theta
-                new_loss = self._compute_adaptation_loss(self.theta, [t[self.M:] for t in traj], new_theta_dict)
+                new_loss = self._compute_adaptation_loss(self.theta, k_trajs, new_theta_dict)
                 new_losses.append(new_loss)
             self.theta_loss = torch.mean(torch.stack(new_losses))
             gt.stamp('adaptation')
