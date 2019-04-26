@@ -3,7 +3,7 @@ import torch
 import gym
 import gym.spaces as gsp
 from gym.envs.classic_control import CartPoleEnv, PendulumEnv
-from gym.envs.mujoco import AntEnv, HalfCheetahEnv
+from gym.envs.mujoco import MujocoEnv, AntEnv, HalfCheetahEnv, SwimmerEnv
 
 class Task(gym.Env):
     def get_cost(self, state, action, next_state):
@@ -42,6 +42,23 @@ class Task(gym.Env):
         state = super().reset(*args, **kwargs)
         return np.float32(state)
 
+
+class MujocoTask(Task, MujocoEnv):
+    def _get_obs(self):
+        return np.concatenate([
+            self.sim.data.qpos.flat,
+            self.sim.data.qvel.flat,
+        ])
+    
+    def set_new_state(self, state):
+        self.set_state(state[:self.model.nq], state[self.model.nq:self.model.nq + self.model.nv])
+
+    def step(self, action, *args, **kwargs):
+        action = self.reformat_action(action)
+        if self.action_space: action = np.clip(action, self.action_space.low, self.action_space.high)
+        next_state, reward, done, info = super().step(action, *args, **kwargs)
+        return np.float32(next_state), reward, done, info
+
 # custom tasks
 
 class CartPoleTask(Task, CartPoleEnv):
@@ -69,16 +86,9 @@ class CartPoleTask(Task, CartPoleEnv):
         return np.float32(next_state), reward, done, info
 
 
-class AntTask(Task, AntEnv):
-    def _get_obs(self):
-        return np.concatenate([
-            self.sim.data.qpos.flat,
-            self.sim.data.qvel.flat,
-        ])
-
+class AntTask(MujocoTask, AntEnv):
     def get_cost(self, state, action, next_state):
         xposbefore, xposafter = state[:, 0], next_state[:, 0]
-        xposafter = np.clip(xposafter, xposbefore - 10.0, xposbefore + 10.0)
         forward_reward = (xposafter - xposbefore) / self.dt
         ctrl_cost = 0.5 * torch.pow(action, 2).sum(dim=1)
         survive_reward = 1.0
@@ -92,9 +102,6 @@ class AntTask(Task, AntEnv):
         qvel = torch.tensor(self.init_qvel, dtype=torch.float) + torch.randn(n, self.model.nv) * 0.1
         return torch.cat((qpos, qvel), -1)
 
-    def set_new_state(self, state):
-        self.set_state(state[:self.model.nq], state[self.model.nq:self.model.nq + self.model.nv])
-
     def step(self, action, *args, **kwargs):
         action = self.reformat_action(action)
         if self.action_space: action = np.clip(action, self.action_space.low, self.action_space.high)
@@ -102,16 +109,9 @@ class AntTask(Task, AntEnv):
         return np.float32(next_state), reward, done, info
 
 
-class HalfCheetahTask(Task, HalfCheetahEnv):
-    def _get_obs(self):
-        return np.concatenate([
-            self.sim.data.qpos.flat,
-            self.sim.data.qvel.flat,
-        ])
-    
+class HalfCheetahTask(MujocoTask, HalfCheetahEnv):
     def get_cost(self, state, action, next_state):
         xposbefore, xposafter = state[:, 0], next_state[:, 0]
-        xposafter = np.clip(xposafter, xposbefore - 10.0, xposbefore + 10.0)
         reward_ctrl = -0.1 * torch.pow(action, 2).sum(dim=1)
         reward_run = (xposafter - xposbefore) / self.dt
         cost = -(reward_ctrl + reward_run)
@@ -123,11 +123,17 @@ class HalfCheetahTask(Task, HalfCheetahEnv):
         qvel = torch.tensor(self.init_qvel, dtype=torch.float) + torch.randn(n, self.model.nv) * 0.1
         return torch.cat((qpos, qvel), -1)
 
-    def set_new_state(self, state):
-        self.set_state(state[:self.model.nq], state[self.model.nq:self.model.nq + self.model.nv])
 
-    def step(self, action, *args, **kwargs):
-        action = self.reformat_action(action)
-        if self.action_space: action = np.clip(action, self.action_space.low, self.action_space.high)
-        next_state, reward, done, info = super().step(action, *args, **kwargs)
-        return np.float32(next_state), reward, done, info
+class SwimmerTask(MujocoTask, SwimmerEnv):
+    def get_cost(self, state, action, next_state):
+        xposbefore, xposafter = state[:, 0], next_state[:, 0]
+        reward_fwd = (xposafter - xposbefore) / self.dt
+        reward_ctrl = -0.0001 * torch.pow(action, 2).sum(dim=1)
+        cost = -(reward_fwd + reward_ctrl)
+        done = torch.zeros((len(state), 1), dtype=torch.float)
+        return cost, done
+
+    def get_reset_state(self, n):
+        qpos = torch.tensor(self.init_qpos, dtype=torch.float) + torch.FloatTensor(n, self.model.nq).uniform_(-0.1, 0.1)
+        qvel = torch.tensor(self.init_qvel, dtype=torch.float) + torch.FloatTensor(n, self.model.nv).uniform_(-0.1, 0.1)
+        return torch.cat((qpos, qvel), -1)
