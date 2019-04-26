@@ -423,6 +423,39 @@ class MBMRL:
         self.eval_rewards = mean_rewards
         return mean_rewards
 
+    def debug(self):
+        gt.reset()
+        gt.set_def_unique(False)
+
+        for i in gt.timed_for(range(self.iteration_num), save_itrs=True):
+            self._start_iteration(i)
+
+            if i % self.task_sample_frequency == 0:
+                self.logger.log('Data Collection')
+                task = self._sample_task()
+                rollouts = self._collect_traj(task)
+                self._n_rollouts_total += 1
+                self.dataset.extend(rollouts)
+            gt.stamp('sample')
+
+            self.logger.log('Adaptation Update')
+
+            m_trajs, k_trajs = self._sample_traj()
+            self.theta_loss = self._compute_adaptation_loss(self.theta, m_trajs) + \
+                self._compute_adaptation_loss(self.theta, k_trajs)
+            self._meta_update(self.theta_loss)
+
+            gt.stamp('adaptation')
+            gt.stamp('meta')
+
+            if i % self.eval_frequency == 0:
+                self.logger.log('Evaluation')
+                self.evaluate()
+            gt.stamp('eval')
+
+            self._end_iteration(i)
+
+
     def train(self, resume=False, load_iter=None):
         gt.reset()
         gt.set_def_unique(False)
