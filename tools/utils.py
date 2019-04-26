@@ -19,6 +19,7 @@ env_dict = {
     'cartpole': 'CartPoleTask-v0',
     'ant': 'AntTask-v0',
     'halfcheetah': 'HalfCheetahTask-v0',
+    'swimmer': 'SwimmerTask-v0'
 }
 
 def set_seed(seed):
