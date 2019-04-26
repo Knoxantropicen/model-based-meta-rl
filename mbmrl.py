@@ -52,9 +52,9 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
             if past_traj:
                 st, ac, next_st = past_traj
                 st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
-                delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
-                pred_next_st = st + delta_st
-                loss = loss_func.get_loss(pred_next_st, next_st) / len(st)
+                delta_st = next_st - st
+                pred_delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
+                loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
                 _n_model_steps_total += 1
                 d_theta = autograd.grad(loss, theta.parameters())
 
@@ -67,9 +67,9 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
                 for _ in range(adaptation_update_num):
                     st, ac, next_st = past_traj
                     st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
-                    delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
-                    pred_next_st = st + delta_st
-                    new_loss = loss_func.get_loss(pred_next_st, next_st) / len(st)
+                    delta_st = next_st - st
+                    pred_delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
+                    new_loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
                     _n_model_steps_total += 1
                     zero_grad(new_theta_params.values())
                     d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
@@ -250,9 +250,9 @@ class MBMRL:
     def _compute_adaptation_loss(self, theta, traj, new_theta=None):
         state, action, next_state = traj
         state, action, next_state = cuda(state), cuda(action), cuda(next_state)
-        delta_state = theta(torch.cat((state, action), 1), new_params=new_theta)
-        pred_next_state = state + delta_state
-        loss = self.loss_func.get_loss(pred_next_state, next_state) / len(state)
+        delta_state = next_state - state
+        pred_delta_state = theta(torch.cat((state, action), 1), new_params=new_theta)
+        loss = self.loss_func.get_loss(pred_delta_state, delta_state) / len(state)
         self._n_model_steps_total += 1
         return loss
 
