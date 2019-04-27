@@ -16,7 +16,8 @@ LOG_MAP = {
     'loss': 'Model Loss',
     'reward': 'Reward',
     'iter': 'Iteration',
-    'step': 'Total Model Steps',
+    'model_step': 'Total Model Steps',
+    'task_step': 'Total Task Steps',
     'time': 'Total Time (s)',
 }
 
