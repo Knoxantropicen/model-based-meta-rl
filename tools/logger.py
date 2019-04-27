@@ -4,11 +4,11 @@ import sys
 import json
 import datetime
 import dateutil.tz
-import pickle
 import csv
+import torch
 
 import config
-from tools.utils import mkdir, save_cfgs
+from tools.utils import mkdir, save_cfgs, cuda_device
 from tools.tabulate import tabulate
 
 class Logger:
@@ -144,38 +144,48 @@ class Logger:
         del self._tabular_prefixes[-1]
         self._tabular_prefix_str = ''.join(self._tabular_prefixes)
 
-    def save_extra_data(self, data, file_name='extra_data.pkl'):
+    def save_extra_data(self, data, file_name='extra_data.pth'):
         file_name = osp.join(self._snapshot_dir, file_name)
-        with open(file_name, 'wb') as f:
-            pickle.dump(data, f)
+        torch.save(data, file_name)
 
-    def load_extra_data(self, file_name='extra_data.pkl'):
+    def load_extra_data(self, file_name='extra_data.pth'):
         file_name = osp.join(self._snapshot_dir, file_name)
-        with open(file_name, 'rb') as f:
-            data = pickle.load(f)
+        data = torch.load(file_name)
         return data
 
-    def save_params(self, iter, params):
+    def save_params(self, iter, train_params, other_params):
         if self._snapshot_dir:
             if self._snapshot_mode == 'all':
-                file_name = osp.join(self._snapshot_dir, 'iter_%d.pkl' % iter)
-                pickle.dump(params, open(file_name, "wb"))
+                file_name = osp.join(self._snapshot_dir, 'train_iter_%d.pth' % iter)
+                torch.save(train_params, file_name)
+                file_name = osp.join(self._snapshot_dir, 'other_iter_%d.pth' % iter)
+                torch.save(other_params, file_name)
             elif self._snapshot_mode == 'last':
                 # override previous params
-                file_name = osp.join(self._snapshot_dir, 'params.pkl')
-                pickle.dump(params, open(file_name, "wb"))
+                file_name = osp.join(self._snapshot_dir, 'train_params.pth')
+                torch.save(train_params, file_name)
+                file_name = osp.join(self._snapshot_dir, 'other_params.pth')
+                torch.save(other_params, file_name)
             elif self._snapshot_mode == "gap":
                 if iter % self._snapshot_gap == 0:
                     file_name = osp.join(self._snapshot_dir,
-                                         'iter_%d.pkl' % iter)
-                    pickle.dump(params, open(file_name, "wb"))
+                                         'train_iter_%d.pth' % iter)
+                    torch.save(train_params, file_name)
+                    file_name = osp.join(self._snapshot_dir,
+                                         'other_iter_%d.pth' % iter)
+                    torch.save(other_params, file_name)
             elif self._snapshot_mode == "gap_and_last":
                 if iter % self._snapshot_gap == 0:
                     file_name = osp.join(self._snapshot_dir,
-                                         'iter_%d.pkl' % iter)
-                    pickle.dump(params, open(file_name, "wb"))
-                file_name = osp.join(self._snapshot_dir, 'params.pkl')
-                pickle.dump(params, open(file_name, "wb"))
+                                         'train_iter_%d.pth' % iter)
+                    torch.save(train_params, file_name)
+                    file_name = osp.join(self._snapshot_dir,
+                                         'other_iter_%d.pth' % iter)
+                    torch.save(other_params, file_name)
+                file_name = osp.join(self._snapshot_dir, 'train_params.pth')
+                torch.save(train_params, file_name)
+                file_name = osp.join(self._snapshot_dir, 'other_params.pth')
+                torch.save(other_params, file_name)
             elif self._snapshot_mode == 'none':
                 pass
             else:
@@ -185,15 +195,19 @@ class Logger:
         if self._snapshot_dir:
             if self._snapshot_mode in ['all', 'gap'] or (self._snapshot_mode == 'gap_and_last' and iter is not None):
                 assert iter is not None, 'must specify iteration when loading params'
-                file_name = osp.join(self._snapshot_dir, 'iter_%d.pkl' % iter)
-                with open(file_name, 'rb') as f:
-                    return pickle.load(f)
+                file_name = osp.join(self._snapshot_dir, 'train_iter_%d.pth' % iter)
+                params = torch.load(file_name, map_location=cuda_device())
+                file_name = osp.join(self._snapshot_dir, 'other_iter_%d.pth' % iter)
+                params.update(torch.load(file_name))
+                return params
             elif self._snapshot_mode in ['last', 'gap_and_last']:
-                file_name = osp.join(self._snapshot_dir, 'params.pkl')
-                with open(file_name, 'rb') as f:
-                    return pickle.load(f)
+                file_name = osp.join(self._snapshot_dir, 'train_params.pth')
+                params = torch.load(file_name, map_location=cuda_device())
+                file_name = osp.join(self._snapshot_dir, 'other_params.pth')
+                params.update(torch.load(file_name))
+                return params
             elif self._snapshot_mode == 'none':
-                pass
+                return None
             else:
                 raise NotImplementedError
 

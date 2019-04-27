@@ -163,22 +163,22 @@ class MBMRL:
 
     def _get_params(self, iter):
         return {
-            'iteration': iter,
             'theta': self.theta.state_dict(),
-            'meta_optimizer': self.meta_optimizer.state_dict(),
-            'lr_optimizer': self.lr_optimizer.state_dict(),
             'phi': self.phi,
             'loss': self.theta_loss,
+            'meta_optimizer': self.meta_optimizer.state_dict(),
+            'lr_optimizer': self.lr_optimizer.state_dict(),
             'loss_func_optimizer': self.loss_func.state_dict(),
+            }, {
+            'iteration': iter,
             'reward': self.eval_rewards,
             }
     
     def _set_params(self, params):
         self.theta.load_state_dict(params['theta'])
-        self.theta = cuda(self.theta)
         self.meta_optimizer.load_state_dict(params['meta_optimizer'])
         self.lr_optimizer.load_state_dict(params['lr_optimizer'])
-        self.phi = cuda(params['phi'])
+        self.phi = params['phi']
         self.theta_loss = params['loss']
         self.loss_func.load_state_dict(params['loss_func_optimizer'])
         self.eval_rewards = params['reward']
@@ -213,9 +213,9 @@ class MBMRL:
     def _end_iteration(self, iter):
         self._record_stats()
         self.logger.pop_prefix()
-        params_to_be_saved = self._get_params(iter)
-        params_to_be_saved.update(self._get_stats())
-        self.logger.save_params(iter, params_to_be_saved)
+        train_params, other_params = self._get_params(iter)
+        other_params.update(self._get_stats())
+        self.logger.save_params(iter, train_params, other_params)
         self.logger.save_extra_data(self._get_extra_data())
 
     def _record_stats(self):
