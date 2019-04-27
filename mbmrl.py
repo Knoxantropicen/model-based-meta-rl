@@ -157,7 +157,6 @@ class MBMRL:
         self._n_model_steps_total = 0
         self._n_rollouts_total = 0
         self._time_total = 0
-        self._time_total_prev = 0
 
     ##### LOGGER #####
 
@@ -204,7 +203,7 @@ class MBMRL:
         self._n_task_steps_total = stats['n_task_steps']
         self._n_model_steps_total = stats['n_model_steps']
         self._n_rollouts_total = stats['n_rollouts']
-        self._time_total_prev = stats['time']
+        self._time_total = stats['time']
 
     def _start_iteration(self, iter):
         self.logger.push_prefix('Iteration #%d | ' % iter)
@@ -225,7 +224,7 @@ class MBMRL:
         meta_time = times_itrs['meta'][-1]
         eval_time = times_itrs['eval'][-1]
         iter_time = sample_time + adaptation_time + meta_time
-        self._time_total = gt.get_times().total + self._time_total_prev - eval_time
+        self._time_total += iter_time
 
         self.logger.record_tabular('Model Loss', np.float32(self.theta_loss.data.cpu()))
         for task, reward in zip(self.tasks, self.eval_rewards):
