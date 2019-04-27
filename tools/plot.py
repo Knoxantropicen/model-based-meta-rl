@@ -68,6 +68,8 @@ def plot_rewards(progress_csvs, save_dir,
                     plt.plot(x, y, color=color, alpha=0.5)
                 fit = np.polyfit(x, y, fit_order)
                 fit = np.polyval(fit, x)
+                if y_range is not None:
+                    fit = np.clip(fit, y_range[0], y_range[1])
                 plt.plot(x, fit, lw=2, label=plot_name, color=color)
             else:
                 plt.plot(x, y, label=plot_name)
