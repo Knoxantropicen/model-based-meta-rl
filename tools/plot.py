@@ -31,7 +31,7 @@ def get_index_from_csv_head(desc, name):
 
 
 def plot_rewards(progress_csvs, save_dir,
-    value='loss', by='iter', do_fit=False, fit_order=6, y_range=None, x_range=None):
+    value='loss', by='iter', do_fit=False, fit_only=False, fit_order=6, y_range=None, x_range=None):
 
     ax = plt.gca()
 
@@ -64,7 +64,8 @@ def plot_rewards(progress_csvs, save_dir,
 
             color = next(ax._get_lines.prop_cycler)['color']
             if do_fit:
-                plt.plot(x, y, color=color, alpha=0.5)
+                if not fit_only:
+                    plt.plot(x, y, color=color, alpha=0.5)
                 fit = np.polyfit(x, y, fit_order)
                 fit = np.polyval(fit, x)
                 plt.plot(x, fit, lw=2, label=plot_name, color=color)
@@ -93,6 +94,7 @@ def main():
     parser.add_argument('--plot-name', default=None, type=str, nargs='+')
     parser.add_argument('--value', type=str, default='loss')
     parser.add_argument('--fit', default=False, action='store_true')
+    parser.add_argument('--fit-only', default=False, action='store_true')
     parser.add_argument('--order', type=int, default=6)
     parser.add_argument('--by', default='iter')
     parser.add_argument('--y-range', default=None, type=float, nargs='+')
@@ -120,7 +122,7 @@ def main():
 
     save_dir = os.path.join(ROOT_DIR, 'plot')
     plot_rewards(progress_csvs, save_dir,
-        value=args.value, by=args.by, do_fit=args.fit, fit_order=args.order, y_range=args.y_range, x_range=args.x_range)
+        value=args.value, by=args.by, do_fit=args.fit, fit_only=args.fit_only, fit_order=args.order, y_range=args.y_range, x_range=args.x_range)
 
 
 if __name__ == '__main__':
