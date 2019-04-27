@@ -224,7 +224,7 @@ class MBMRL:
         adaptation_time = times_itrs['adaptation'][-1]
         meta_time = times_itrs['meta'][-1]
         eval_time = times_itrs['eval'][-1]
-        iter_time = sample_time + adaptation_time + meta_time + eval_time
+        iter_time = sample_time + adaptation_time + meta_time
         self._time_total = gt.get_times().total + self._time_total_prev
 
         self.logger.record_tabular('Model Loss', np.float32(self.theta_loss.data.cpu()))
