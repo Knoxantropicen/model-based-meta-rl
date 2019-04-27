@@ -45,7 +45,5 @@ net_cfg = {
 controller_cfg = {
         'K': 1000, # sample num
         'T': 15, # horizon
-        'noise_mu': 0.0,
-        'noise_sigma': 0.5,
         'lamda': 1.0,
         }

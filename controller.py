@@ -55,30 +55,31 @@ class MPPI(Controller):
     Model Predictive Path Integral Controller
     Original Paper: Williams et al., 2017, 'Information Theoretic MPC for Model-Based Reinforcement Learning'
     '''
-    def __init__(self, T, K, U=None, u=None, noise_mu=0.0, noise_sigma=1.0, lamda=1.0, num_threads=1):
+    def __init__(self, T, K, lamda=1.0, num_threads=1):
         self.task = None
 
         self.T = int(T) # number of timesteps
         self.K = int(K) # number of samples
-        self.U = U # initial control sequence
-        self.U_init = U
-        self.u_init = u
+        self.U = None # control sequence
+        self.u_init = None
 
         # control hyper parameters
-        self.noise_mu = noise_mu
-        self.noise_sigma = noise_sigma
+        self.noise_mu = None
+        self.noise_sigma = None
         self.lamda = lamda
 
         self.num_threads = num_threads
 
     def set_task(self, task):
         self.task = deepcopy(task)
-        if self.U_init is None:
+        self.noise_mu, self.noise_sigma, self.u_init = self.task.get_control_params()
+        print(self.noise_mu, self.noise_sigma, self.u_init)
+        self.U = np.tile(self.u_init, (self.T, 1))
+        if self.u_init is None:
+            self.u_init = self.task.action_space.sample()
             self.U = np.zeros((self.T, get_space_shape(self.task.action_space)))
             for t in range(self.T):
                 self.U[t] = self.task.action_space.sample()
-        else:
-            self.U = self.U_init
         self.U = np.float32(self.U)
         self.noise = self._sample_noise()
 
@@ -186,7 +187,7 @@ class MPPI(Controller):
         self.U += np.sum(weights * self.noise.T, axis=-1).T
         action = self.U[0]
         self.U[:-1] = self.U[1:]
-        self.U[-1] = self.u_init if self.u_init else self.task.action_space.sample()
+        self.U[-1] = self.u_init if self.u_init is not None else self.task.action_space.sample()
         return action
 
 class MPC(MPPI):

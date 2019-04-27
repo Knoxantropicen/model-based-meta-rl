@@ -17,6 +17,12 @@ class Task(gym.Env):
         return vectorized reset state [n, dim_state] (torch.tensor, dtype=float)
         '''
         raise NotImplementedError
+
+    def get_control_params(self):
+        '''
+        return mu, sigma, u_init for controller
+        '''
+        raise NotImplementedError
     
     def reformat_action(self, action):
         if isinstance(self.action_space, gsp.Box):
@@ -49,6 +55,14 @@ class MujocoTask(Task, MujocoEnv):
             self.sim.data.qpos.flat,
             self.sim.data.qvel.flat,
         ])
+
+    def get_control_params(self):
+        low, high = self.action_space.low, self.action_space.high
+        mu = 0
+        sigma = 0.5 * (high - low)
+        mean = low + sigma
+        u_init = np.full(self.action_space.shape, mean)
+        return mu, sigma, u_init
     
     def set_new_state(self, state):
         self.set_state(state[:self.model.nq], state[self.model.nq:self.model.nq + self.model.nv])
@@ -74,6 +88,12 @@ class CartPoleTask(Task, CartPoleEnv):
 
     def get_reset_state(self, n):
         return torch.FloatTensor(n, 4).uniform_(-0.05, 0.05)
+
+    def get_control_params(self):
+        mu = 0.0
+        sigma = 0.5
+        u_init = np.array([0.5])
+        return mu, sigma, u_init
 
     def set_new_state(self, state):
         self.state = state
@@ -101,12 +121,6 @@ class AntTask(MujocoTask, AntEnv):
         qpos = torch.tensor(self.init_qpos, dtype=torch.float) + torch.FloatTensor(n, self.model.nq).uniform_(-0.1, 0.1)
         qvel = torch.tensor(self.init_qvel, dtype=torch.float) + torch.randn(n, self.model.nv) * 0.1
         return torch.cat((qpos, qvel), -1)
-
-    def step(self, action, *args, **kwargs):
-        action = self.reformat_action(action)
-        if self.action_space: action = np.clip(action, self.action_space.low, self.action_space.high)
-        next_state, reward, done, info = super().step(action, *args, **kwargs)
-        return np.float32(next_state), reward, done, info
 
 
 class HalfCheetahTask(MujocoTask, HalfCheetahEnv):
