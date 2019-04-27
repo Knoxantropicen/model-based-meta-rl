@@ -71,7 +71,6 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
                     pred_delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
                     new_loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
                     _n_model_steps_total += 1
-                    zero_grad(new_theta_params.values())
                     d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
                     for (key, val), d, ph in zip(theta.named_parameters(), d_theta, phi):
                         new_theta_params[key] = val - ph * d
@@ -282,19 +281,18 @@ class MBMRL:
 
             if loss_func_update:
                 self.loss_func.update(new_loss)
-
         return new_theta_dict
 
     def _meta_update(self, meta_loss):
-        self.meta_optimizer.zero_grad()
-        self.lr_optimizer.zero_grad()
-        self.loss_func.zero_grad()
-
         meta_loss.backward(retain_graph=True)
 
         self.meta_optimizer.step()
         self.lr_optimizer.step()
         self.loss_func.step()
+
+        self.meta_optimizer.zero_grad()
+        self.lr_optimizer.zero_grad()
+        self.loss_func.zero_grad()
 
     def _collect_traj_parallel(self, task):
         workers = []
@@ -492,6 +490,7 @@ class MBMRL:
             self._meta_update(self.theta_loss)
             gt.stamp('meta')
 
+
             if i % self.eval_frequency == 0:
                 self.logger.log('Evaluation')
                 self.evaluate()
@@ -516,7 +515,7 @@ class MBMRL:
         rollout = []
         state = task.reset()
         self.controller.set_task(task)
-            
+        
         for i in gt.timed_for(range(start_iter, iteration_num), save_itrs=True):
 
             t = 0
@@ -525,12 +524,17 @@ class MBMRL:
             state = task.reset()
             while not done:
                 past_traj = [r[-self.M:] for r in rollout]
-                new_theta_dict = self._adaptation_update(self.theta, past_traj, loss_func_update=True)
-                action = self.controller.plan(self.theta, state, new_theta_dict, debug)
+                
+                if past_traj != []:
+                    for _ in range(self.adaptation_update_num):
+                        loss = self._compute_adaptation_loss(self.theta, past_traj)
+                        zero_grad(self.theta.parameters())
+                        self._meta_update(loss)
+
+                action = self.controller.plan(self.theta, state, None, debug)
                 next_state, reward, done, _ = task.step(action)
                 reward_sum += reward
-                if new_theta_dict is not None:
-                    self.theta.load_state_dict(new_theta_dict)
+
                 if render:
                     task.render()
 
