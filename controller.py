@@ -80,17 +80,18 @@ class MPPI(Controller):
         else:
             self.U = self.U_init
         self.U = np.float32(self.U)
+        self.noise = self._sample_noise()
 
     def _sample_noise(self):
         action_dim = get_space_shape(self.task.action_space)
         return np.random.normal(loc=self.noise_mu, scale=self.noise_sigma, 
             size=(self.K, self.T, action_dim)).astype('f')
 
-    def _compute_costs_serial(self, dynamics, state_init, noise, new_dynamics_params=None):
+    def _compute_costs_serial(self, dynamics, state_init, new_dynamics_params=None):
         costs = torch.zeros(self.K)
         state = torch.stack(([torch.tensor(state_init, dtype=torch.float32)] * self.K))
         for t in range(self.T):
-            action = torch.stack(([torch.tensor(self.U[t] + noise[k, t, :]) for k in range(self.K)]))
+            action = torch.stack(([torch.tensor(self.U[t] + self.noise[k, t, :]) for k in range(self.K)]))
             gpu_id = next(dynamics.parameters()).device
             delta_state = dynamics(cuda(torch.cat((state, action), -1), gpu_id), new_dynamics_params).detach()
             next_state = state + delta_state.cpu()
@@ -101,7 +102,7 @@ class MPPI(Controller):
         costs = costs.numpy()
         return costs
 
-    def _compute_costs_parallel(self, dynamics, state_init, noise, new_dynamics_params=None):
+    def _compute_costs_parallel(self, dynamics, state_init, new_dynamics_params=None):
         workers = []
         queue = mp.Queue()
         # distribute K to all threads
@@ -112,7 +113,7 @@ class MPPI(Controller):
                 if new_dynamics_params is not None:
                     for key, val in new_dynamics_params.items():
                         new_dynamics_params[key] = val.detach()
-                worker_args = (pid, queue, K, self.T, self.U, state_init, noise, dynamics, new_dynamics_params, self.task)
+                worker_args = (pid, queue, K, self.T, self.U, state_init, self.noise, dynamics, new_dynamics_params, self.task)
                 workers.append(mp.Process(target=_compute_costs_per_thread, args=worker_args))
         for worker in workers:
             worker.start()
@@ -130,13 +131,13 @@ class MPPI(Controller):
         else:
             return self._compute_costs_serial(*args, **kwargs)
 
-    def _compute_real_costs_serial(self, state_init, noise):
+    def _compute_real_costs_serial(self, state_init):
         costs = np.zeros(self.K)
         for k in range(self.K):
             self.task.reset()
             self.task.env.set_new_state(state_init)
             for t in range(self.T):
-                action = self.U[t] + noise[k, t, :]
+                action = self.U[t] + self.noise[k, t, :]
                 _, reward, done, _ = self.task.step(action)
                 costs[k] -= reward
                 if done:
@@ -144,7 +145,7 @@ class MPPI(Controller):
         self.task.env.set_new_state(state_init)
         return costs
 
-    def _compute_real_costs_parallel(self, state_init, noise):
+    def _compute_real_costs_parallel(self, state_init):
         workers = []
         queue = mp.Queue()
         # distribute K to all threads
@@ -152,7 +153,7 @@ class MPPI(Controller):
         Ks[:self.K % self.num_threads] += 1
         for pid, K in zip(range(self.num_threads), Ks):
             if K > 0:
-                worker_args = (pid, queue, K, self.T, self.U, state_init, noise, self.task)
+                worker_args = (pid, queue, K, self.T, self.U, state_init, self.noise, self.task)
                 workers.append(mp.Process(target=_compute_real_costs_per_thread, args=worker_args))
         for worker in workers:
             worker.start()
@@ -177,13 +178,12 @@ class MPPI(Controller):
         return weights
 
     def plan(self, dynamics, state, new_dynamics_params=None, debug=False):
-        noise = self._sample_noise()
         if debug:
-            costs = self._compute_real_costs(state, noise)
+            costs = self._compute_real_costs(state)
         else:
-            costs = self._compute_costs(dynamics, state, noise, new_dynamics_params)
+            costs = self._compute_costs(dynamics, state, new_dynamics_params)
         weights = self._compute_importance_weights(costs)
-        self.U += np.sum(weights * noise.T, axis=-1).T
+        self.U += np.sum(weights * self.noise.T, axis=-1).T
         action = self.U[0]
         self.U[:-1] = self.U[1:]
         self.U[-1] = self.u_init if self.u_init else self.task.action_space.sample()
@@ -191,11 +191,10 @@ class MPPI(Controller):
 
 class MPC(MPPI):
     def plan(self, dynamics, state, new_dynamics_params=None, debug=False):
-        noise = self._sample_noise()
         if debug:
-            costs = self._compute_real_costs(state, noise)
+            costs = self._compute_real_costs(state)
         else:
-            costs = self._compute_costs(dynamics, state, noise, new_dynamics_params)
+            costs = self._compute_costs(dynamics, state, new_dynamics_params)
         best_k = np.argmin(costs)
-        action = self.U[0] + noise[best_k, 0, :]
+        action = self.U[0] + self.noise[best_k, 0, :]
         return action
