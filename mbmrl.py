@@ -53,7 +53,9 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
                 st, ac, next_st = past_traj
                 st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
                 delta_st = next_st - st
-                pred_delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
+                st_ac = torch.cat((st, ac), 1)
+
+                pred_delta_st = theta(st_ac, new_params=new_theta_dict)
                 loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
                 _n_model_steps_total += 1
                 d_theta = autograd.grad(loss, theta.parameters())
@@ -65,10 +67,7 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
                     new_theta_dict[key] = new_theta_params[key]
                 
                 for _ in range(adaptation_update_num):
-                    st, ac, next_st = past_traj
-                    st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
-                    delta_st = next_st - st
-                    pred_delta_st = theta(torch.cat((st, ac), 1), new_params=new_theta_dict)
+                    pred_delta_st = theta(st_ac, new_params=new_theta_dict)
                     new_loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
                     _n_model_steps_total += 1
                     d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
