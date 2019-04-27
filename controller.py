@@ -73,7 +73,6 @@ class MPPI(Controller):
     def set_task(self, task):
         self.task = deepcopy(task)
         self.noise_mu, self.noise_sigma, self.u_init = self.task.env.get_control_params()
-        print(self.noise_mu, self.noise_sigma, self.u_init)
         self.U = np.tile(self.u_init, (self.T, 1))
         if self.u_init is None:
             self.u_init = self.task.action_space.sample()
