@@ -437,10 +437,11 @@ class MBMRL:
 
             self.logger.log('Adaptation Update')
 
-            m_trajs, k_trajs = self._sample_traj()
-            self.theta_loss = self._compute_adaptation_loss(self.theta, m_trajs) + \
-                self._compute_adaptation_loss(self.theta, k_trajs)
-            self._meta_update(self.theta_loss)
+            for _ in range(self.adaptation_update_num):
+                m_trajs, k_trajs = self._sample_traj()
+                trajs = [torch.cat((m_trajs[dim], k_trajs[dim])) for dim in range(3)]
+                self.theta_loss = self._compute_adaptation_loss(self.theta, trajs)
+                self._meta_update(self.theta_loss)
 
             gt.stamp('adaptation')
             gt.stamp('meta')
