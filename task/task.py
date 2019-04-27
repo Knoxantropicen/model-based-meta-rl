@@ -61,7 +61,7 @@ class MujocoTask(Task, MujocoEnv):
         mu = 0
         sigma = 0.5 * (high - low)
         mean = low + sigma
-        u_init = np.full(self.action_space.shape, mean)
+        u_init = np.full(self.action_space.shape, mean, dtype=np.float32)
         return mu, sigma, u_init
     
     def set_new_state(self, state):
