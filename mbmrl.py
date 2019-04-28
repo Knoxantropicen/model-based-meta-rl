@@ -32,7 +32,7 @@ def _aggregate_rollout(rollout, state, action, next_state):
     return rollout
 
 def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout_num, rollout_len, M,
-    phi, adaptation_update_num, loss_func):
+    phi, adaptation_update_num, loss_func, debug):
     '''
     per thread function of parallel trajectory collection
     see MBMRL._collect_traj_serial() for method description
@@ -47,33 +47,35 @@ def _collect_traj_per_thread(pid, event, queue, task, controller, theta, rollout
         rollout = []
         t = 0
         while t < rollout_len:
-            past_traj = [r[-M:] for r in rollout]
             new_theta_dict = None
-            if past_traj:
-                st, ac, next_st = past_traj
-                st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
-                delta_st = next_st - st
-                st_ac = torch.cat((st, ac), 1)
 
-                pred_delta_st = theta(st_ac, new_params=new_theta_dict)
-                loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
-                _n_model_steps_total += 1
-                d_theta = autograd.grad(loss, theta.parameters())
+            if not debug:
+                past_traj = [r[-M:] for r in rollout]
+                if past_traj:
+                    st, ac, next_st = past_traj
+                    st, ac, next_st = cuda(st), cuda(ac), cuda(next_st)
+                    delta_st = next_st - st
+                    st_ac = torch.cat((st, ac), 1)
 
-                new_theta_dict = {key: val.clone() for key, val in theta.state_dict().items()}
-                new_theta_params = OrderedDict()
-                for (key, val), d, ph in zip(theta.named_parameters(), d_theta, phi):
-                    new_theta_params[key] = val - ph * d
-                    new_theta_dict[key] = new_theta_params[key]
-                
-                for _ in range(adaptation_update_num):
                     pred_delta_st = theta(st_ac, new_params=new_theta_dict)
-                    new_loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
+                    loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
                     _n_model_steps_total += 1
-                    d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
+                    d_theta = autograd.grad(loss, theta.parameters())
+
+                    new_theta_dict = {key: val.clone() for key, val in theta.state_dict().items()}
+                    new_theta_params = OrderedDict()
                     for (key, val), d, ph in zip(theta.named_parameters(), d_theta, phi):
                         new_theta_params[key] = val - ph * d
                         new_theta_dict[key] = new_theta_params[key]
+                    
+                    for _ in range(adaptation_update_num):
+                        pred_delta_st = theta(st_ac, new_params=new_theta_dict)
+                        new_loss = loss_func.get_loss(pred_delta_st, delta_st) / len(st)
+                        _n_model_steps_total += 1
+                        d_theta = autograd.grad(new_loss, new_theta_params.values(), create_graph=True)
+                        for (key, val), d, ph in zip(theta.named_parameters(), d_theta, phi):
+                            new_theta_params[key] = val - ph * d
+                            new_theta_dict[key] = new_theta_params[key]
 
             action = controller.plan(theta, state, new_theta_dict)
             next_state, _, done, _ = task.step(action)
@@ -292,7 +294,7 @@ class MBMRL:
         self.lr_optimizer.zero_grad()
         self.loss_func.zero_grad()
 
-    def _collect_traj_parallel(self, task):
+    def _collect_traj_parallel(self, task, debug=False):
         workers = []
         event = mp.Event()
         queue = mp.Queue()
@@ -301,7 +303,7 @@ class MBMRL:
         for pid, rollout_num_per_thread in zip(range(self.num_threads), rollout_nums):
             if rollout_num_per_thread > 0:
                 worker_args = (pid, event, queue, task, self.controller, self.theta, rollout_num_per_thread, self.rollout_len, self.M,
-                    self.phi, self.adaptation_update_num, self.loss_func)
+                    self.phi, self.adaptation_update_num, self.loss_func, debug)
                 workers.append(mp.Process(target=_collect_traj_per_thread, args=worker_args))
         for worker in workers:
             worker.start()
@@ -315,7 +317,7 @@ class MBMRL:
         event.set()
         return rollouts
 
-    def _collect_traj_serial(self, task):
+    def _collect_traj_serial(self, task, debug=False):
         rollouts = []
         self.controller.set_task(task)
         state = task.reset()
@@ -323,8 +325,10 @@ class MBMRL:
             rollout = []
             t = 0
             while t < self.rollout_len:
-                past_traj = [r[-self.M:] for r in rollout]
-                new_theta_dict = self._adaptation_update(self.theta, past_traj)
+                new_theta_dict = None
+                if not debug:
+                    past_traj = [r[-self.M:] for r in rollout]
+                    new_theta_dict = self._adaptation_update(self.theta, past_traj)
                 action = self.controller.plan(self.theta, state, new_theta_dict)
                 next_state, _, done, _ = task.step(action)
                 if action.shape == ():
@@ -338,31 +342,44 @@ class MBMRL:
             rollouts.append(rollout)
         return rollouts
 
-    def _collect_traj(self, task):
+    def _collect_traj(self, *args, **kwargs):
         if self.num_threads > 1:
-            return self._collect_traj_parallel(task)
+            return self._collect_traj_parallel(*args, **kwargs)
         else:
-            return self._collect_traj_serial(task)
+            return self._collect_traj_serial(*args, **kwargs)
 
-    def _sample_traj(self):
-        m_trajs, k_trajs = [], []
-        for _ in range(self.traj_sample_num):
-            rollout = self.dataset[np.random.choice(len(self.dataset))]
-            m_start_idx = np.random.choice(len(rollout[0]) + 1 - self.M - self.K)
-            m_end_idx = m_start_idx + self.M
-            k_start_idx = m_end_idx
-            k_end_idx = k_start_idx + self.K
-            m_traj = [r[m_start_idx: m_end_idx] for r in rollout]
-            k_traj = [r[k_start_idx: k_end_idx] for r in rollout]
-            if m_trajs == []:
-                m_trajs = m_traj
-            else:
-                m_trajs = [torch.cat((m_trajs[dim], m_traj[dim])) for dim in range(3)]
-            if k_trajs == []:
-                k_trajs = k_traj
-            else:
-                k_trajs = [torch.cat((k_trajs[dim], k_traj[dim])) for dim in range(3)]
-        return m_trajs, k_trajs
+    def _sample_traj(self, debug=False):
+        if not debug:
+            m_trajs, k_trajs = [], []
+            for _ in range(self.traj_sample_num):
+                rollout = self.dataset[np.random.choice(len(self.dataset))]
+                m_start_idx = np.random.choice(len(rollout[0]) + 1 - self.M - self.K)
+                m_end_idx = m_start_idx + self.M
+                k_start_idx = m_end_idx
+                k_end_idx = k_start_idx + self.K
+                m_traj = [r[m_start_idx: m_end_idx] for r in rollout]
+                k_traj = [r[k_start_idx: k_end_idx] for r in rollout]
+                if m_trajs == []:
+                    m_trajs = m_traj
+                else:
+                    m_trajs = [torch.cat((m_trajs[dim], m_traj[dim])) for dim in range(3)]
+                if k_trajs == []:
+                    k_trajs = k_traj
+                else:
+                    k_trajs = [torch.cat((k_trajs[dim], k_traj[dim])) for dim in range(3)]
+            return m_trajs, k_trajs
+        else:
+            trajs = []
+            for _ in range(self.traj_sample_num):
+                rollout = self.dataset[np.random.choice(len(self.dataset))]
+                start_idx = np.random.choice(len(rollout[0]) + 1 - self.M - self.K)
+                end_idx = start_idx + self.M + self.K
+                traj = [r[start_idx: end_idx] for r in rollout]
+                if trajs == []:
+                    trajs = traj
+                else:
+                    trajs = [torch.cat((trajs[dim], traj[dim])) for dim in range(3)]
+            return trajs
 
     def _sample_task(self):
         # TODO: support task distribution
@@ -429,7 +446,7 @@ class MBMRL:
             if i % self.task_sample_frequency == 0:
                 self.logger.log('Data Collection')
                 task = self._sample_task()
-                rollouts = self._collect_traj(task)
+                rollouts = self._collect_traj(task, debug=True)
                 self._n_rollouts_total += 1
                 self.dataset.extend(rollouts)
             gt.stamp('sample')
@@ -437,8 +454,7 @@ class MBMRL:
             self.logger.log('Adaptation Update')
 
             for _ in range(self.adaptation_update_num):
-                m_trajs, k_trajs = self._sample_traj()
-                trajs = [torch.cat((m_trajs[dim], k_trajs[dim])) for dim in range(3)]
+                trajs = self._sample_traj(debug=True)
                 self.theta_loss = self._compute_adaptation_loss(self.theta, trajs)
                 self._meta_update(self.theta_loss)
 
